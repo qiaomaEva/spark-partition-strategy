@@ -19,18 +19,21 @@
 **硬件环境**
 
 - 物理服务器：1 台
-  - CPU：64 核
-  - 内存：754 GiB
-  - 存储：根据实际填写（如 NVMe SSD / HDD）
-  - 网络：千兆/万兆以太网（按实际写）
-  - 操作系统：如 `Ubuntu 20.04` / `CentOS 7` 等
+  - CPU：2 × Intel(R) Xeon(R) Gold 6226R @ 2.90GHz  
+    （共 32 物理核 / 64 线程，`lscpu` 查询结果）
+  - 内存：754 GiB（`free -h` 查询结果）
+  - 存储：
+    - 系统盘：1.8 TB（划分为 `/`、`/home`、`/boot` 等分区）
+    - 数据盘：7.3 TB（挂载于 `/data`）
+  - 网络：以太网（具体带宽未进一步区分）
+  - 操作系统：Ubuntu 20.04.3 LTS（`/etc/os-release` 查询结果）
 
 **软件环境**
 
-- JDK：1.8.x
-- Spark：3.5.7（Standalone 模式）
-- Python / Scala 版本：根据实际填写
-- 其他依赖：pytest / matplotlib 等（若使用时再补充）
+- JDK：OpenJDK 1.8.0_452  
+- Spark：3.5.7（Standalone 模式，1 Master + 3 Workers）
+- Python：3.10.9（可使用 PySpark 编写作业）
+- 其他依赖：根据实际代码使用情况补充（如 pandas、matplotlib 等）
 
 **Spark 集群配置（Standalone）**
 
@@ -122,3 +125,4 @@
   - 撰写 “实验结果与分析” 与 “结论” 部分文档
 
 > 贡献度排序：A ≈ C ≈ B > D
+
