@@ -106,10 +106,8 @@
 
 - **同学 A**
   - 负责 Spark 集群环境搭建与维护（1 Master + 3 Workers）
-  - 在服务器上执行所有实验脚本，收集运行日志与性能指标
   - 设计实验方案与实验矩阵（不同数据分布、数据规模、分区策略）
-  - 整理实验环境说明及集群相关截图
-  
+  - 在服务器上执行所有实验脚本，收集运行日志与性能指标
 - **同学 B**
   - 设计实验数据集（均匀 / 倾斜 key 分布）
   - 编写数据生成脚本（`code/data_gen/`）和 HashPartitioner 实验作业代码（`code/jobs/hash_*`）
@@ -119,10 +117,9 @@
   - 编写 RangePartitioner 实验作业代码（`code/jobs/range_*`）
   - 设计并实现自定义 Partitioner 实验（`code/jobs/custom_*`）
   - 编写对应的集群运行脚本（`code/scripts/run_range_*.sh`、`code/scripts/run_custom_*.sh`）
-
 - **同学 D**
   - 负责整理 `code/results/` 中的结果数据，完成可视化与统计分析
   - 撰写 “实验结果与分析” 与 “结论” 部分文档
 
-> 贡献度排序：A ≈ C ≈ B > D
+> 贡献度排序：A ≈ B ≈ C > D
 
