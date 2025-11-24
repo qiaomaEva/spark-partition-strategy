@@ -47,7 +47,7 @@
 
 > 下图为 Spark 集群 Web UI 截图（1 Master + 3 Workers）：
 >
-> ![cluster-overview](D:\spark-partition-strategy\assets\cluster-overview.png)
+> ![cluster-overview](assets\cluster-overview.png)
 
 ### 3.2 实验负载
 
@@ -106,13 +106,12 @@
 
 - **同学 A**
   - 负责 Spark 集群环境搭建与维护（1 Master + 3 Workers）
-  - 设计实验方案与实验矩阵（不同数据分布、数据规模、分区策略）
+  - 建立 GitHub 仓库，编写README文档
+  - 设计实验数据集（均匀 / 倾斜 key 分布）
   - 在服务器上执行所有实验脚本，收集运行日志与性能指标
 - **同学 B**
-  - 设计实验数据集（均匀 / 倾斜 key 分布）
   - 编写数据生成脚本（`code/data_gen/`）和 HashPartitioner 实验作业代码（`code/jobs/hash_*`）
   - 编写对应的集群运行脚本（`code/scripts/run_hash_*.sh`）
-
 - **同学 C**
   - 编写 RangePartitioner 实验作业代码（`code/jobs/range_*`）
   - 设计并实现自定义 Partitioner 实验（`code/jobs/custom_*`）
