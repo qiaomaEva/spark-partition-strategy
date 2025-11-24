@@ -110,7 +110,7 @@
   - 设计实验数据集（均匀 / 倾斜 key 分布）编写数据生成脚本（`code/data_gen/`）
   - 在服务器上执行所有实验脚本，收集运行日志与性能指标
 - **同学 B**
-  - 编写和HashPartitioner 实验作业代码（`code/jobs/hash_*`）
+  - 编写HashPartitioner 实验作业代码（`code/jobs/hash_*`）
   - 编写对应的集群运行脚本（`code/scripts/run_hash_*.sh`）
 - **同学 C**
   - 编写 RangePartitioner 实验作业代码（`code/jobs/range_*`）
