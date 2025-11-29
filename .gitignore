@@ -1,0 +1,20 @@
+﻿# Python cache / virtualenv
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.env
+.venv/
+venv/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Spark data and logs
+data/
+logs/
+
+# Results / reports (optional, keep if you want to version them)
+code/results/*.json

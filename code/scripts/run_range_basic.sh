@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env bash
 set -e
 
-# Master 上是用 conda 管理 Spark 环境，需要下面这一行；
+# Master 上是用 conda 管理 Spark 环境，需要激活环境
 # 本地测试时注释掉即可
 # conda activate spark310
 
