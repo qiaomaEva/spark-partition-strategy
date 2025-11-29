@@ -1,4 +1,6 @@
-﻿import argparse
+﻿import os
+from datetime import datetime
+import argparse
 import time
 from typing import Literal, Dict, Any, List, Tuple
 
@@ -208,7 +210,22 @@ def run_range_experiment(sc: SparkContext, rdd: RDD, num_partitions: int) -> Dic
 def main():
     args = parse_args()
 
-    conf = SparkConf().setAppName("RangePartitionerBasic")
+    # 为当前实验 run 生成一个唯一 ID（方便多次运行区分）
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Spark 事件日志目录（保存到项目根目录下的 logs/spark-events）
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    event_log_dir = os.path.join(project_root, "logs", "spark-events")
+    event_log_dir = os.path.abspath(event_log_dir)
+
+    conf = (
+        SparkConf()
+        .setAppName(f"RangePartitionerBasic-{run_id}")
+        .set("spark.eventLog.enabled", "true")
+        .set("spark.eventLog.dir", f"file://{event_log_dir}")
+    )
+    # 确保事件日志目录存在
+    os.makedirs(event_log_dir, exist_ok=True)
     sc = SparkContext.getOrCreate(conf)
 
     print("===== RangePartitioner Basic Experiment (by C) =====")

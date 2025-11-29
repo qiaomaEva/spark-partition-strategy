@@ -1,20 +1,42 @@
-﻿# Python cache / virtualenv
+﻿# Python编译文件
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
-.env
-.venv/
-venv/
+*$py.class
+*.so
 
-# IDE / editor
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv
+
+# IDE配置文件
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+
+# PyInstaller相关
+build/
+dist/
+*.spec
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 临时文件
+*.tmp
+*.bak
 
 # Spark data and logs
 data/
-logs/
+# logs/spark-events/
 
-# Results / reports (optional, keep if you want to version them)
-code/results/*.json
+# Results (如果需要把实验结果 JSON 上传到仓库，就删掉这一行)
+# code/results/*.json
