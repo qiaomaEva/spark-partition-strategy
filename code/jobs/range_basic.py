@@ -1,23 +1,28 @@
-﻿import os
-from datetime import datetime
-
-import argparse
+﻿import argparse
 import time
 from typing import Literal, Dict, Any, List, Tuple
 
 from pyspark import SparkConf, SparkContext
 from pyspark.rdd import RDD
 
-InputKind = Literal["uniform", "skewed"]
+InputKind = Literal["synthetic", "uniform", "skewed"]
+
+# 为了和 DataGen.py 中的设定保持一致，这里写几个常量：
+# - NUM_KEYS: key 的取值范围 0 ~ NUM_KEYS-1
+# - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
+# - HOT_KEY: 倾斜数据中的热点 key
+NUM_KEYS = 1000
+SKEW_RATIO = 0.85
+HOT_KEY = 0
 
 
 def parse_args() -> argparse.Namespace:
     """
     解析命令行参数：
       --input-type: synthetic / uniform / skewed
-      --num-records: 生成多少条记录（仅 synthetic 模式使用）
+      --num-records: 生成多少条记录
       --num-partitions: RDD 的分区数
-      --input-path: 从文件读数据时的根目录
+      --input-path: 原来从文件读数据时的根目录（现在可以忽略）
       --print-sample: 是否打印结果样本（仅本地调试用）
     """
     parser = argparse.ArgumentParser(
@@ -29,14 +34,19 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="synthetic",
         choices=["synthetic", "uniform", "skewed"],
-        help="input data type: synthetic (generated), uniform or skewed (from CSV files).",
+        help=(
+            "input data type: "
+            "synthetic (simple pattern), "
+            "uniform (generated in Spark), "
+            "skewed (generated in Spark)."
+        ),
     )
 
     parser.add_argument(
         "--num-records",
         type=int,
         default=100000,
-        help="number of records to generate in synthetic mode.",
+        help="number of records to generate for all input types.",
     )
 
     parser.add_argument(
@@ -50,8 +60,10 @@ def parse_args() -> argparse.Namespace:
         "--input-path",
         type=str,
         default="data",
-        help="root path of input data when input-type is uniform or skewed.",
+        help="(legacy) root path of input data when reading from CSV. "
+             "Currently not used because data are generated in Spark.",
     )
+
     parser.add_argument(
         "--print-sample",
         action="store_true",
@@ -67,52 +79,71 @@ def build_synthetic_rdd(sc: SparkContext, num_records: int, num_partitions: int)
     构造一个简单的 (key, value) RDD：
       - key: 0 ~ 9 循环
       - value: 序号本身
+    用于最简单的功能验证。
     """
     data = [(i % 10, i) for i in range(num_records)]
     rdd = sc.parallelize(data, numSlices=num_partitions)
     return rdd
 
-# 增加从 CSV 文件读入数据的函数
-def build_rdd_from_csv(
+
+def build_uniform_rdd_generated(
     sc: SparkContext,
-    input_root: str,
-    kind: InputKind,
+    num_records: int,
     num_partitions: int,
+    num_keys: int = NUM_KEYS,
 ) -> RDD:
     """
-    从 CSV 读入 (key, value) 形式的数据。
+    在 Spark 中生成“均匀”分布的 (key, value) RDD。
 
-    假设目录结构类似：
-      data/uniform_data/*.csv
-      data/skewed_data/*.csv
-
-    每行格式假定为: key,value
-    如果你们真实数据格式不一样，可以按实际修改解析逻辑。
+    这里为了简单和可控，用一种确定性但近似均匀的方式：
+      - 先用 sc.range 生成 [0, num_records) 的 long 序列
+      - key = i % num_keys   （i 是记录序号）
+      - value = 1
+    这样每个 key 出现的次数基本相同，相当于均匀分布。
     """
-    if kind == "uniform":
-        path = f"{input_root}/uniform_data/*.csv"
-    elif kind == "skewed":
-        path = f"{input_root}/skewed_data/*.csv"
-    else:
-        raise ValueError(f"Unsupported kind: {kind}")
+    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
 
-    # 读原始文本
-    lines = sc.textFile(path, minPartitions=num_partitions)
+    def map_to_kv(i: int):
+        k = int(i % num_keys)
+        v = 1
+        return k, v
 
-    # 解析成 (key, value)；假设 key, value 都是整数
-    def parse_line(line: str):
-        parts = line.strip().split(",")
-        if len(parts) < 2:
-            return None
-        try:
-            k = int(parts[0])
-            v = int(parts[1])
-            return (k, v)
-        except ValueError:
-            return None
+    rdd = base_rdd.map(map_to_kv)
+    return rdd
 
-    parsed = lines.map(parse_line).filter(lambda x: x is not None)
-    return parsed
+
+def build_skewed_rdd_generated(
+    sc: SparkContext,
+    num_records: int,
+    num_partitions: int,
+    num_keys: int = NUM_KEYS,
+    skew_ratio: float = SKEW_RATIO,
+    hot_key: int = HOT_KEY,
+) -> RDD:
+    """
+    在 Spark 中生成带热点 key 的倾斜 (key, value) RDD。
+
+    思路和 DataGen.py 保持一致：
+      - 总记录数 num_records
+      - 其中前 skew_ratio * num_records 条记录都给热点 key（hot_key）
+      - 剩下的记录均匀分布在其它 key（1..num_keys-1）上
+      - value = 1
+    """
+    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
+    threshold = int(num_records * skew_ratio)
+
+    def map_to_kv(i: int):
+        if i < threshold:
+            k = hot_key
+        else:
+            # 分布到 1..num_keys-1 之间，避免和 hot_key 冲突
+            k = 1 + int(i % (num_keys - 1))
+        v = 1
+        return k, v
+
+    rdd = base_rdd.map(map_to_kv)
+    return rdd
+
 
 def compute_partition_distribution(rdd: RDD) -> List[Tuple[int, int]]:
     """
@@ -130,7 +161,7 @@ def compute_partition_distribution(rdd: RDD) -> List[Tuple[int, int]]:
     dist_rdd = rdd.mapPartitionsWithIndex(count_in_partition)
     return sorted(dist_rdd.collect(), key=lambda x: x[0])
 
-# 核心实验逻辑
+
 def run_range_experiment(sc: SparkContext, rdd: RDD, num_partitions: int) -> Dict[str, Any]:
     """
     执行 Range-like 实验，并返回一组指标：
@@ -164,7 +195,7 @@ def run_range_experiment(sc: SparkContext, rdd: RDD, num_partitions: int) -> Dic
     metrics["t_agg"] = t3 - t2
     metrics["t_total"] = (t1 - t0) + (t3 - t2)
 
-    # 5. reduce 后的分区分布（可选：一般 reduce 后分区不变，但数据条数减少）
+    # 5. reduce 后的分区分布
     partition_dist_after_reduce = compute_partition_distribution(reduced_rdd)
     metrics["partition_distribution_after_reduce"] = partition_dist_after_reduce
 
@@ -177,22 +208,7 @@ def run_range_experiment(sc: SparkContext, rdd: RDD, num_partitions: int) -> Dic
 def main():
     args = parse_args()
 
-    # 为当前实验 run 生成一个唯一 ID（方便多次运行区分）
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Spark 事件日志目录（保存到项目根目录下的 logs/spark-events）
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    event_log_dir = os.path.join(project_root, "logs", "spark-events")
-    event_log_dir = os.path.abspath(event_log_dir)
-
-    conf = (
-        SparkConf()
-        .setAppName(f"RangePartitionerBasic-{run_id}")
-        .set("spark.eventLog.enabled", "true")
-        .set("spark.eventLog.dir", f"file://{event_log_dir}")
-    )
-    #
-    os.makedirs(event_log_dir, exist_ok=True)
+    conf = SparkConf().setAppName("RangePartitionerBasic")
     sc = SparkContext.getOrCreate(conf)
 
     print("===== RangePartitioner Basic Experiment (by C) =====")
@@ -201,22 +217,26 @@ def main():
     print(f"Num partitions : {args.num_partitions}")
     print(f"Num partitions : {args.num_partitions}")
 
-    # 1. 根据输入类型input-type构造RDD
+    # 1. 根据输入类型 input-type 构造 RDD
     if args.input_type == "synthetic":
         rdd = build_synthetic_rdd(sc, args.num_records, args.num_partitions)
     elif args.input_type == "uniform":
-        rdd = build_rdd_from_csv(
+        # 在 Spark 内部生成均匀数据，而不是读 CSV
+        rdd = build_uniform_rdd_generated(
             sc,
-            input_root=args.input_path,
-            kind="uniform",
+            num_records=args.num_records,
             num_partitions=args.num_partitions,
+            num_keys=NUM_KEYS,
         )
     elif args.input_type == "skewed":
-        rdd = build_rdd_from_csv(
+        # 在 Spark 内部生成倾斜数据，而不是读 CSV
+        rdd = build_skewed_rdd_generated(
             sc,
-            input_root=args.input_path,
-            kind="skewed",
+            num_records=args.num_records,
             num_partitions=args.num_partitions,
+            num_keys=NUM_KEYS,
+            skew_ratio=SKEW_RATIO,
+            hot_key=HOT_KEY,
         )
     else:
         raise ValueError(f"Unsupported input-type: {args.input_type}")
@@ -230,8 +250,8 @@ def main():
         result_sample = sorted(result_rdd.collect())[:20]
     else:
         result_sample = []
-    
-    # 4. 结构化打印指标（方便复制到报告或导出为 JSON）
+
+    # 4. 结构化打印指标
     print("----- Metrics -----")
     print(f"t_sort_seconds           : {metrics['t_sort']:.6f}")
     print(f"t_agg_seconds            : {metrics['t_agg']:.6f}")
@@ -253,7 +273,6 @@ def main():
         print("Result sample (key -> sum), first 20 keys:")
         for k, v in result_sample:
             print(f"  {k} -> {v}")
-
 
     sc.stop()
 
