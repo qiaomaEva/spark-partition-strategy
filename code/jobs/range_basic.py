@@ -7,8 +7,6 @@ from typing import Literal, Dict, Any, List, Tuple
 from pyspark import SparkConf, SparkContext
 from pyspark.rdd import RDD
 
-InputKind = Literal["synthetic", "uniform", "skewed"]
-
 # 为了和 DataGen.py 中的设定保持一致，这里写几个常量：
 # - NUM_KEYS: key 的取值范围 0 ~ NUM_KEYS-1
 # - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
@@ -21,10 +19,9 @@ HOT_KEY = 0
 def parse_args() -> argparse.Namespace:
     """
     解析命令行参数：
-      --input-type: synthetic / uniform / skewed
+      --input-type: synthetic / uniform / skewed（数据生成模式）
       --num-records: 生成多少条记录
       --num-partitions: RDD 的分区数
-      --input-path: 原来从文件读数据时的根目录（现在可以忽略）
       --print-sample: 是否打印结果样本（仅本地调试用）
     """
     parser = argparse.ArgumentParser(
@@ -38,7 +35,7 @@ def parse_args() -> argparse.Namespace:
         choices=["synthetic", "uniform", "skewed"],
         help=(
             "input data type: "
-            "synthetic (simple pattern), "
+            "synthetic (simple pattern generated), "
             "uniform (generated in Spark), "
             "skewed (generated in Spark)."
         ),
@@ -56,14 +53,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=4,
         help="number of partitions for the RDD / sortByKey.",
-    )
-
-    parser.add_argument(
-        "--input-path",
-        type=str,
-        default="data",
-        help="(legacy) root path of input data when reading from CSV. "
-             "Currently not used because data are generated in Spark.",
     )
 
     parser.add_argument(
@@ -232,7 +221,7 @@ def main():
     print(f"Input type     : {args.input_type}")
     print(f"Num records    : {args.num_records}")
     print(f"Num partitions : {args.num_partitions}")
-    print(f"Num partitions : {args.num_partitions}")
+    print(f"Print sample   : {args.print_sample}")
 
     # 1. 根据输入类型 input-type 构造 RDD
     if args.input_type == "synthetic":
