@@ -201,6 +201,8 @@ spark-submit \
 ### 3.4 实验结果与分析
 
 （实验完成后填写）
+Range 实验详见 `docs/range_experiment.md`
+Custom 实验详见 `docs/custom_experiment.md`
 
 - 表格呈现不同场景下的执行时间 / Shuffle 数据量 / tail task 时长。
 - 使用图表对比：
