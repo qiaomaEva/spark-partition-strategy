@@ -30,6 +30,9 @@ spark-submit \
   "$@"
 
 # 2. 实验结束后，自动解析最新 event log 并导出 JSON
+#  ARGS 解析，生成 TAG
+# 可以根据需要在 TAG 里写一个简短描述（可选）
+TAG=""
 
 ARGS=("$@")
 input_type="unknown"
