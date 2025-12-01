@@ -15,6 +15,7 @@
 ```
 spark-partition-strategy/
 ├── code/
+│
 │   ├── jobs/
 │   │   ├── hash_basic.py          # Hash 分区器实验
 │   │   ├── range_basic.py         # Range 分区器实验
@@ -23,19 +24,23 @@ spark-partition-strategy/
 │   │   ├── run_hash_basic.sh      # Hash 实验运行脚本
 │   │   ├── run_range_basic.sh     # Range 实验运行脚本
 │   │   └── run_custom_basic.sh    # Custom 实验运行脚本
-│   └── utils/
-│       └── metrics.py             # 公共指标统计与 JSON 输出工具
-├── code/results/
-│   ├── hash_uniform_*.json        # Hash + 均匀数据
-│   ├── hash_skewed_*.json         # Hash + 倾斜数据
-│   ├── range_uniform_*.json       # Range + 均匀数据
-│   ├── range_skewed_*.json        # Range + 倾斜数据
-│   ├── custom_uniform_*.json      # Custom + 均匀数据
-│   └── custom_skewed_*.json       # Custom + 倾斜数据
-└── docs/
-    ├── range_experiment.md        # Range 实验细节
-	├── hash_experiment.md         # Hash 实验细节
-    └── custom_experiment.md       # 自定义分区器实验细节
+│ 	├──results/
+│   │   ├── hash_uniform_*.json        # Hash + 均匀数据
+│   │   ├── hash_skewed_*.json         # Hash + 倾斜数据
+│   │   ├── range_uniform_*.json       # Range + 均匀数据
+│   │   ├── range_skewed_*.json        # Range + 倾斜数据
+│   │   ├── custom_uniform_*.json      # Custom + 均匀数据
+│   │   └── custom_skewed_*.json       # Custom + 倾斜数据
+│   └── tools/
+│       ├── collect_latest_eventlog.py
+│       └── parse_spark_eventlog.py
+├── logs/                       # Spark event logs
+│
+├── docs/
+│    ├── range_experiment.md        # Range 实验细节
+│	 ├── hash_experiment.md         # Hash 实验细节
+│    └── custom_experiment.md       # 自定义分区器实验细节
+└── README.md                   # 本文件
 ```
 
 ------
@@ -385,11 +390,6 @@ bash code/scripts/run_custom_basic.sh \
    - 实验中，自定义 Partitioner 将热点 key 拆分后：
      - Task 时延分布更均匀；
      - tail task 时长降低，Job 整体完成时间更稳定。
-4. **对实际业务的启示**
-   - 在日志分析、推荐系统特征聚合等典型场景中：
-     - 先分析 key 分布，再选择 / 设计分区策略；
-     - 必要时使用自定义 Partitioner 或者加盐（salting）方案，显式拆分热点 key；
-     - 结合 Spark Web UI 中的 Stage Timeline 观察 tail task，是调优的重要依据。
 
 ------
 

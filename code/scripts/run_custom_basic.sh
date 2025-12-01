@@ -18,7 +18,6 @@ set -e
 #      自动生成一个 JSON 到 code/results/，文件名前缀为 custom_...。
 
 # Master 上用 conda 管理 Spark 环境时需要激活环境，本地测试可注释掉
-# conda activate spark310
 
 cd ~/spark-partition-strategy
 
