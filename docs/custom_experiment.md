@@ -1,4 +1,4 @@
-# 自定义分区实验说明（Custom Partitioner）
+# 自定义分区实验说明（Custom Partitioner, 同学 C）
 
 本文档说明如何在本项目中复现 **自定义 Partitioner（Custom）实验** 的完整流程，包括：
 
