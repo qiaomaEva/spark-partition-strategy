@@ -16,12 +16,12 @@ set -e
 #      自动生成一个 JSON 到 code/results/，文件名前缀为 hash_...。
 
 # Master 上用 conda 管理 Spark 环境时需要激活环境，本地测试可注释掉
-# conda activate spark310
+
 
 cd ~/spark-partition-strategy
 
 # 1. 运行 Hash 实验
-#--master spark://172.23.166.104:7078
+#--master spark://172.24.49.56:7077
 # 本地测试时可以改为 --master local[*]
 spark-submit \
   --master spark://172.24.49.56:7077 \
