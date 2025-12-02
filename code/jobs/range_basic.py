@@ -7,6 +7,7 @@ from typing import Literal, Dict, Any, List, Tuple
 from pyspark import SparkConf, SparkContext
 from pyspark.rdd import RDD
 
+<<<<<<< HEAD
 from jobs.common import (
     NUM_KEYS,
     SKEW_RATIO,
@@ -16,6 +17,15 @@ from jobs.common import (
     build_skewed_rdd_generated,
     compute_partition_distribution,
 )
+=======
+# 为了和 DataGen.py 中的设定保持一致，这里写几个常量：
+# - NUM_KEYS: key 的取值范围 0 ~ NUM_KEYS-1
+# - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
+# - HOT_KEY: 倾斜数据中的热点 key
+NUM_KEYS = 1000
+SKEW_RATIO = 0.95
+HOT_KEY = 0
+>>>>>>> 3edcdcb54072367a31fe2b4099751e25d04ef299
 
 
 def parse_args() -> argparse.Namespace:
