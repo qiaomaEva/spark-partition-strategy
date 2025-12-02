@@ -7,7 +7,6 @@ from typing import Dict, Any, List, Tuple, Set
 from pyspark import SparkConf, SparkContext
 from pyspark.rdd import RDD
 
-<<<<<<< HEAD
 from jobs.common import (
     NUM_KEYS,
     SKEW_RATIO,
@@ -17,15 +16,6 @@ from jobs.common import (
     build_skewed_rdd_generated,
     compute_partition_distribution,
 )
-=======
-# 为了和 range_basic / DataGen 设定保持一致：
-# - NUM_KEYS: key 取值范围 0 ~ NUM_KEYS-1
-# - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
-# - HOT_KEY: 倾斜数据中的热点 key
-NUM_KEYS = 1000
-SKEW_RATIO = 0.95
-HOT_KEY = 0
->>>>>>> 3edcdcb54072367a31fe2b4099751e25d04ef299
 
 # ---------- 参数解析 ----------
 
@@ -281,15 +271,10 @@ def main():
 
     # 如果用户没有显式指定热点 key 且当前是倾斜数据，
     # 则自动将数据生成时使用的 HOT_KEY 作为热点 key。
+    # 注意：hot_bucket_factor 完全由命令行参数控制，这里不做自动放大，
+    # 以便实验结果中的 bX 与实际使用的桶数一致。
     if not hot_keys and args.input_type == "skewed":
         hot_keys = {HOT_KEY}
-
-    # 对单热点倾斜场景，更激进地放大 hot_bucket_factor，
-    # 以便热点 key 的流量可以在更多分区上摊开。
-    if len(hot_keys) == 1 and args.input_type == "skewed":
-        # 至少不要比分区数小，这样在 partitioner 里就有机会
-        # 直接把热点流量摊到所有分区。
-        args.hot_bucket_factor = max(args.hot_bucket_factor, args.num_partitions)
 
     # 运行实验
     metrics = run_custom_experiment(

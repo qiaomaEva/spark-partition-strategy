@@ -62,7 +62,8 @@ Custom 与 Range 一样，使用 Spark **内部生成**的数据，不再依赖�
   - `--num-records`：生成记录数；
   - `--num-partitions`：逻辑分区数（自定义分区前后都保持一致）；
   - `--hot-keys`：逗号分隔的热点 key 列表，例如 `"0"` 或 `"0,1,2"`；
-  - `--hot-bucket-factor`：每个热点 key 拆成多少个子桶位（例如 4、8）；
+    - 若在 `--input-type=skewed` 场景下不指定（或传空字符串），程序会自动将数据生成时使用的 `HOT_KEY` 视为唯一热点 key；
+  - `--hot-bucket-factor`：每个热点 key 拆成多少个子桶位（例如 4、8、32）。**该值不会被程序自动修改，实际使用的桶数与命令行保持一致**；
   - `--print-sample`：是否打印结果样本，仅本地调试使用。
 
 ### 2.3 输出指标（stdout）
@@ -202,61 +203,177 @@ custom_skewed_hot0_b4_p128_10m_20251201_231045.json
      - Task 时长分布（尤其 tail）  
      上的差异。
 
-## 6. 推荐的实验工作流（Custom 分区）
+## 6. 推荐的实验工作流（Range / Hash / Custom 对比）
 
-下面以一组“倾斜数据 + 热点 key=0” 的实验为例，展示完整的 Custom 分区实验流程。其它配置只需要修改命令行参数即可。
+这一节给出一套完整的对比实验流程，目标是：
 
-1. **在 Master 上拉取最新代码**
+- 在 **均匀数据** 下，三种策略表现接近，Custom 不明显退化；
+- 在 **温和倾斜** 下，Custom 至少不比 Hash 差，甚至略有优势；
+- 在 **极端倾斜** 下，Custom 能通过合理的拆桶配置明显优于 Hash。
+
+下面的命令都假设你在项目根目录 `/home/xxx/spark-partition-strategy` 下执行。
+
+### 6.1 均匀场景：uniform, p16, 2m
+
+1. **运行 Hash / Range / Custom**
 
    ```bash
-   cd ~/spark-partition-strategy
-   git pull
+   # Hash, uniform, 2m, p16
+   code/scripts/run_hash_basic.sh \
+     --input-type uniform \
+     --num-records 2000000 \
+     --num-partitions 16
+
+   # Range, uniform, 2m, p16
+   code/scripts/run_range_basic.sh \
+     --input-type uniform \
+     --num-records 2000000 \
+     --num-partitions 16
+
+   # Custom, uniform, 2m, p16（无热点，无需拆桶，可以用 b1 或 4 做 sanity check）
+   code/scripts/run_custom_basic.sh \
+     --input-type uniform \
+     --num-records 2000000 \
+     --num-partitions 16 \
+     --hot-keys "" \
+     --hot-bucket-factor 1
    ```
 
-2. **运行 Custom 实验（自动导出 JSON）**
+   这组三个 JSON 大致会是：
 
-   例如，在 Master 上使用倾斜数据、热点 key=0、128 分区、1 千万条记录：
+   - `hash_uniform_p16_2m_*.json`
+   - `range_uniform_p16_2m_*.json`
+   - `custom_uniform_hotNone_b1_p16_2m_*.json`
+
+2. **预期现象**
+
+   - 三者的 `task_p90_ms` / `task_p99_ms` 差别不大；
+   - Custom 在均匀数据下不会明显慢于 Hash / Range。
+
+### 6.2 温和倾斜场景：skewed, p64, 5m（对比 Hash / Range / Custom-b8）
+
+这里假设 `SKEW_RATIO` 在 0.7~0.8 左右，生成 500 万条记录、64 个分区。
+
+1. **运行 Hash / Range / Custom（b8）**
 
    ```bash
+   # Hash, skewed, 5m, p64
+   code/scripts/run_hash_basic.sh \
+     --input-type skewed \
+     --num-records 5000000 \
+     --num-partitions 64
+
+   # Range, skewed, 5m, p64
+   code/scripts/run_range_basic.sh \
+     --input-type skewed \
+     --num-records 5000000 \
+     --num-partitions 64
+
+   # Custom, skewed, 5m, p64，单热点 key=0，适中拆桶 b8
    code/scripts/run_custom_basic.sh \
      --input-type skewed \
-     --num-records 10000000 \
-     --num-partitions 128 \
+     --num-records 5000000 \
+     --num-partitions 64 \
      --hot-keys "0" \
-     --hot-bucket-factor 4
+     --hot-bucket-factor 8
    ```
 
-   该脚本会：
+   生成的文件名大致为：
 
-   - 使用 `spark-submit` 运行 `code/jobs/custom_basic.py`；
-   - 在 `logs/spark-events/` 中生成对应的 Spark event log；
-   - 自动调用 `code/tools/collect_latest_eventlog.py` + `parse_spark_eventlog.py`，
-     在 `code/results/` 下生成一个类似：
+   - `hash_skewed_p64_5m_*.json`
+   - `range_skewed_p64_5m_*.json`
+   - `custom_skewed_hot0_b8_p64_5m_*.json`
 
-     ```text
-     custom_skewed_hot0_b4_p128_10m_YYYYMMDD_HHMMSS.json
-     ```
+2. **预期现象**
 
-     的结果文件。
+   - Hash 在热点分区上可能出现较大的 `task_p99_ms`；
+   - Range 会比 Hash 略好，但不一定完美；
+   - Custom-b8 借助拆桶，热点压力摊薄后，`task_p90_ms` / `task_p99_ms` 至少不比 Hash 差，整体 job 时间接近或略优。
 
-3. **确认 Spark Web UI 和控制台输出**
+### 6.3 极端倾斜场景：skewed, p64, 5m（对比不同桶数 b4 / b8 / b32）
 
-   - Web UI：在 `http://<master-host>:8088` 或 `:4040` 查看该 Application 的 Job / Stage / Task 信息；
-   - 控制台：
-     - `custom_basic.py` 打印的：
-       - `t_partition_seconds`、`t_agg_seconds`、`t_total_seconds_approx`；
-       - `partition_distribution_before`、`partition_distribution_after_custom`；
-     - 可以直观观察自定义分区前后分布变化。
+这一组实验我们固定：
 
-4. **查看并收集 JSON 结果**
+- 数据类型：`skewed`
+- 记录数：`5m`（500 万）
+- 分区数：`64`
+- 热点 key：`0`
 
-   ```bash
-   ls code/results
-   # 例如：
-   # custom_skewed_hot0_b4_p128_10m_20251201_231045.json
-   ```
+只改变 Custom 的 `hot-bucket-factor`，对比 `b4` / `b8` / `b32` 三种配置：
 
-   打开该 JSON，可以看到与 Range 一致结构的指标字段，例如：
+```bash
+# Custom, skewed, p64, 5m, b4
+code/scripts/run_custom_basic.sh \
+  --input-type skewed \
+  --num-records 5000000 \
+  --num-partitions 64 \
+  --hot-keys "0" \
+  --hot-bucket-factor 4
+
+# Custom, skewed, p64, 5m, b8
+code/scripts/run_custom_basic.sh \
+  --input-type skewed \
+  --num-records 5000000 \
+  --num-partitions 64 \
+  --hot-keys "0" \
+  --hot-bucket-factor 8
+
+# Custom, skewed, p64, 5m, b32（更激进拆桶，接近 num-partitions）
+code/scripts/run_custom_basic.sh \
+  --input-type skewed \
+  --num-records 5000000 \
+  --num-partitions 64 \
+  --hot-keys "0" \
+  --hot-bucket-factor 32
+```
+
+对应的结果文件名大致为：
+
+- `custom_skewed_hot0_b4_p64_5m_*.json`
+- `custom_skewed_hot0_b8_p64_5m_*.json`
+- `custom_skewed_hot0_b32_p64_5m_*.json`
+
+你可以先单独比较 Hash vs Range vs Custom-b32，验证在极端倾斜 + 适当拆桶下 Custom 能否显著优于 Hash；
+再横向比较 Custom-b4 / b8 / b32，观察拆桶程度对 `task_p90_ms` / `task_p99_ms` 和 job 总时间的影响。
+
+---
+
+## 7. `hot_bucket_factor` 的推荐参数区间
+
+为了方便做对比实验，同时保证文件名中的 `bX` 与实际使用的桶数一致，当前实现中：
+
+- `hot_bucket_factor` 完全由命令行参数控制，不会在代码中被自动放大或修改；
+- 在 `skewed` 场景下，如果未显式传入 `--hot-keys`，则默认将数据生成时的 `HOT_KEY` 视为唯一热点 key。
+
+在实际实验中，建议按以下思路选择 `hot_bucket_factor`：
+
+1. **均匀数据 / 无明显热点（`--input-type=uniform` 或 `--hot-keys=""`）**
+   - 建议使用较小的桶数，例如：
+     - `hot-bucket-factor = 1`（不拆桶，几乎等价于普通 Hash）；
+     - 或 `hot-bucket-factor = 2 ~ 4`（轻微拆桶，用于验证不会对均匀数据产生明显负面影响）。
+
+2. **温和倾斜（例如 `SKEW_RATIO ≈ 0.7 ~ 0.8`，单一热点 key）**
+   - 推荐让 `hot_bucket_factor` 与分区数保持同一量级，但可以适当偏小：
+     - 例如：`num-partitions = 16` 时，可选 `hot-bucket-factor = 4, 8, 16`；
+   - 实验时可以同时跑几组不同的 b 值：
+     - `b4`：较保守的拆桶；
+     - `b8`：中等拆桶；
+     - `b16`：更激进的拆桶；
+   - 通过对比 `partition_distribution_*` 和 task/job 时间指标，观察拆桶程度对倾斜缓解效果与开销的影响。
+
+3. **极端倾斜（例如 `SKEW_RATIO ≥ 0.9`，单一热点 key，分区数较大，如 32/64）**
+   - 为了让热点 key 的流量尽可能均匀地摊到所有分区，推荐：
+     - `hot-bucket-factor` 取值接近或等于 `num-partitions`：
+       - 如 `num-partitions = 32`，可选 `b32`；
+       - 如 `num-partitions = 64`，可选 `b32` 或 `b64`；
+   - 同时也可以留一组偏小的 b（如 `b4` 或 `b8`）对比，展示“拆桶不足时 Custom 无法完全发挥优势”的情况。
+
+4. **多热点场景（如果以后扩展到多个热点 key）**
+   - 一般需要考虑“热点 key 个数 × hot_bucket_factor ≈ num-partitions”的平衡：
+     - 总桶数远大于分区数时，存在多个桶映射到同一分区的折叠现象，拆桶收益会递减；
+   - 当前实验脚本主要面向单热点场景，若后续扩展到多热点，可以在文档中进一步细化推荐区间。
+
+在所有这些实验里，由于 `hot_bucket_factor` 不再被代码自动放大，你可以通过结果文件名中的 `bX`（例如 `custom_skewed_hot0_b4_p64_5m_...json`）直接判断当次实验实际使用的桶数，方便汇总和画图分析。
 
    - `job_count` / `stage_count` / `task_count`
    - `job_durations_ms` / `stage_durations_ms`
