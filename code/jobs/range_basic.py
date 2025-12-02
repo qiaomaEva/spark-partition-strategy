@@ -1,4 +1,4 @@
-﻿import os
+import os
 from datetime import datetime
 import argparse
 import time
@@ -7,13 +7,15 @@ from typing import Literal, Dict, Any, List, Tuple
 from pyspark import SparkConf, SparkContext
 from pyspark.rdd import RDD
 
-# 为了和 DataGen.py 中的设定保持一致，这里写几个常量：
-# - NUM_KEYS: key 的取值范围 0 ~ NUM_KEYS-1
-# - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
-# - HOT_KEY: 倾斜数据中的热点 key
-NUM_KEYS = 1000
-SKEW_RATIO = 0.85
-HOT_KEY = 0
+from jobs.common import (
+    NUM_KEYS,
+    SKEW_RATIO,
+    HOT_KEY,
+    build_synthetic_rdd,
+    build_uniform_rdd_generated,
+    build_skewed_rdd_generated,
+    compute_partition_distribution,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,94 +65,6 @@ def parse_args() -> argparse.Namespace:
 
     args = parser.parse_args()
     return args
-
-
-def build_synthetic_rdd(sc: SparkContext, num_records: int, num_partitions: int) -> RDD:
-    """
-    构造一个简单的 (key, value) RDD：
-      - key: 0 ~ 9 循环
-      - value: 序号本身
-    用于最简单的功能验证。
-    """
-    data = [(i % 10, i) for i in range(num_records)]
-    rdd = sc.parallelize(data, numSlices=num_partitions)
-    return rdd
-
-
-def build_uniform_rdd_generated(
-    sc: SparkContext,
-    num_records: int,
-    num_partitions: int,
-    num_keys: int = NUM_KEYS,
-) -> RDD:
-    """
-    在 Spark 中生成“均匀”分布的 (key, value) RDD。
-
-    这里为了简单和可控，用一种确定性但近似均匀的方式：
-      - 先用 sc.range 生成 [0, num_records) 的 long 序列
-      - key = i % num_keys   （i 是记录序号）
-      - value = 1
-    这样每个 key 出现的次数基本相同，相当于均匀分布。
-    """
-    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
-
-    def map_to_kv(i: int):
-        k = int(i % num_keys)
-        v = 1
-        return k, v
-
-    rdd = base_rdd.map(map_to_kv)
-    return rdd
-
-
-def build_skewed_rdd_generated(
-    sc: SparkContext,
-    num_records: int,
-    num_partitions: int,
-    num_keys: int = NUM_KEYS,
-    skew_ratio: float = SKEW_RATIO,
-    hot_key: int = HOT_KEY,
-) -> RDD:
-    """
-    在 Spark 中生成带热点 key 的倾斜 (key, value) RDD。
-
-    思路和 DataGen.py 保持一致：
-      - 总记录数 num_records
-      - 其中前 skew_ratio * num_records 条记录都给热点 key（hot_key）
-      - 剩下的记录均匀分布在其它 key（1..num_keys-1）上
-      - value = 1
-    """
-    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
-    threshold = int(num_records * skew_ratio)
-
-    def map_to_kv(i: int):
-        if i < threshold:
-            k = hot_key
-        else:
-            # 分布到 1..num_keys-1 之间，避免和 hot_key 冲突
-            k = 1 + int(i % (num_keys - 1))
-        v = 1
-        return k, v
-
-    rdd = base_rdd.map(map_to_kv)
-    return rdd
-
-
-def compute_partition_distribution(rdd: RDD) -> List[Tuple[int, int]]:
-    """
-    统计每个分区的记录数：返回 [(partition_id, count), ...]，按 partition_id 排序。
-    思路：
-      - mapPartitionsWithIndex 拿到 (pid, iterator)
-      - 对每个分区数一下元素个数
-    """
-    def count_in_partition(pid: int, it):
-        cnt = 0
-        for _ in it:
-            cnt += 1
-        yield pid, cnt
-
-    dist_rdd = rdd.mapPartitionsWithIndex(count_in_partition)
-    return sorted(dist_rdd.collect(), key=lambda x: x[0])
 
 
 def run_range_experiment(sc: SparkContext, rdd: RDD, num_partitions: int) -> Dict[str, Any]:

@@ -7,13 +7,15 @@ from typing import Dict, Any, List, Tuple
 from pyspark import SparkConf, SparkContext
 from pyspark.rdd import RDD
 
-# 为了和 DataGen / range_basic / custom_basic 设定保持一致：
-# - NUM_KEYS: key 取值范围 0 ~ NUM_KEYS-1
-# - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
-# - HOT_KEY: 倾斜数据中的热点 key
-NUM_KEYS = 1000
-SKEW_RATIO = 0.85
-HOT_KEY = 0
+from jobs.common import (
+    NUM_KEYS,
+    SKEW_RATIO,
+    HOT_KEY,
+    build_synthetic_rdd,
+    build_uniform_rdd_generated,
+    build_skewed_rdd_generated,
+    compute_partition_distribution,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,83 +67,6 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-# ---------- 数据构造 (与 range/custom 保持完全一致以控制变量) ----------
-
-def build_synthetic_rdd(sc: SparkContext, num_records: int, num_partitions: int) -> RDD:
-    """
-    构造一个简单的 (key, value) RDD：
-      - key: 0 ~ 9 循环
-      - value: 序号本身
-    """
-    data = [(i % 10, i) for i in range(num_records)]
-    rdd = sc.parallelize(data, numSlices=num_partitions)
-    return rdd
-
-
-def build_uniform_rdd_generated(
-    sc: SparkContext,
-    num_records: int,
-    num_partitions: int,
-    num_keys: int = NUM_KEYS,
-) -> RDD:
-    """
-    在 Spark 中生成“均匀”分布的 (key, value) RDD。
-    """
-    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
-
-    def map_to_kv(i: int):
-        k = int(i % num_keys)
-        v = 1
-        return k, v
-
-    rdd = base_rdd.map(map_to_kv)
-    return rdd
-
-
-def build_skewed_rdd_generated(
-    sc: SparkContext,
-    num_records: int,
-    num_partitions: int,
-    num_keys: int = NUM_KEYS,
-    skew_ratio: float = SKEW_RATIO,
-    hot_key: int = HOT_KEY,
-) -> RDD:
-    """
-    在 Spark 中生成带热点 key 的倾斜 (key, value) RDD。
-    """
-    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
-    threshold = int(num_records * skew_ratio)
-
-    def map_to_kv(i: int):
-        if i < threshold:
-            k = hot_key
-        else:
-            # 分布到 1..num_keys-1 之间，避免和 hot_key 冲突
-            k = 1 + int(i % (num_keys - 1))
-        v = 1
-        return k, v
-
-    rdd = base_rdd.map(map_to_kv)
-    return rdd
-
-
-# ---------- 统计工具 ----------
-
-def compute_partition_distribution(rdd: RDD) -> List[Tuple[int, int]]:
-    """
-    统计每个分区的记录数：返回 [(partition_id, count), ...]，按 partition_id 排序。
-    这通常是一个 Action 操作，会触发前面的 Transformation 执行。
-    """
-    def count_in_partition(pid: int, it):
-        cnt = 0
-        for _ in it:
-            cnt += 1
-        yield pid, cnt
-
-    dist_rdd = rdd.mapPartitionsWithIndex(count_in_partition)
-    return sorted(dist_rdd.collect(), key=lambda x: x[0])
-
-
 # ---------- 核心实验逻辑 (Hash Partitioner) ----------
 
 def run_hash_experiment(sc: SparkContext, rdd: RDD, num_partitions: int) -> Dict[str, Any]:
@@ -169,15 +94,14 @@ def run_hash_experiment(sc: SparkContext, rdd: RDD, num_partitions: int) -> Dict
     metrics["partition_distribution_after_hash"] = compute_partition_distribution(partitioned_rdd)
 
     # 4. reduceByKey
-    # 由于数据已经按 Hash 分区，理论上 reduceByKey 这里的 Shuffle 开销会很小（主要是 map-side combine 后直接聚合）
-    # 除非 Spark 优化器决定重新 Shuffle
+    # 由于数据已经按 Hash 分区，理论上 reduceByKey 这里的 Shuffle 开销会很小（主要是 map-side combine 后直接聚合），
+    # 除非 Spark 优化器决定重新 Shuffle。
     t2 = time.time()
 
-    grouped_rdd = partitioned_rdd.groupByKey()
-
-    # 为了触发 Action 并计算时间，我们需要对结果做操作
-    # mapValues(len) 计算每个 key 有多少条记录，count() 触发执行
-    reduced_rdd = grouped_rdd.mapValues(len)
+    # 为了让 Hash / Range / Custom 三个实验的聚合负载更可比，这里使用与其它实验相同的
+    # 模式：对 value 做 sum 的 reduceByKey，然后用 count() 触发执行。
+    # 这样三个脚本都是在计算 (key, sum(value))，便于公平对比。
+    reduced_rdd = partitioned_rdd.reduceByKey(lambda x, y: x + y)
     reduced_rdd.count()  # 触发 Action
 
     t3 = time.time()

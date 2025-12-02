@@ -7,13 +7,15 @@ from typing import Dict, Any, List, Tuple, Set
 from pyspark import SparkConf, SparkContext
 from pyspark.rdd import RDD
 
-# 为了和 range_basic / DataGen 设定保持一致：
-# - NUM_KEYS: key 取值范围 0 ~ NUM_KEYS-1
-# - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
-# - HOT_KEY: 倾斜数据中的热点 key
-NUM_KEYS = 1000
-SKEW_RATIO = 0.85
-HOT_KEY = 0
+from jobs.common import (
+    NUM_KEYS,
+    SKEW_RATIO,
+    HOT_KEY,
+    build_synthetic_rdd,
+    build_uniform_rdd_generated,
+    build_skewed_rdd_generated,
+    compute_partition_distribution,
+)
 
 # ---------- 参数解析 ----------
 
@@ -82,87 +84,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# ---------- 数据构造，与 range_basic 复用风格 ----------
-
-def build_synthetic_rdd(sc: SparkContext, num_records: int, num_partitions: int) -> RDD:
-    """
-    构造 (key, value)：
-      - key: 0~9 循环
-      - value: 序号本身
-    可以后续针对 skew 实验有意识地提高某些 key 的频率。
-    """
-    data = [(i % 10, i) for i in range(num_records)]
-    return sc.parallelize(data, numSlices=num_partitions)
-
-# ---------- 复用 range_basic 的数据生成逻辑 ----------
-def build_uniform_rdd_generated(
-    sc: SparkContext,
-    num_records: int,
-    num_partitions: int,
-    num_keys: int = NUM_KEYS,
-) -> RDD:
-    """
-    在 Spark 中生成“均匀”分布的 (key, value) RDD。
-    与 range_basic 保持一致：
-      - 用 sc.range 生成 [0, num_records) 的 long 序列
-      - key = i % num_keys
-      - value = 1
-    """
-    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
-
-    def map_to_kv(i: int):
-        k = int(i % num_keys)
-        v = 1
-        return k, v
-
-    rdd = base_rdd.map(map_to_kv)
-    return rdd
-
-
-# ---------- 复用 range_basic 的数据生成逻辑 ----------
-def build_skewed_rdd_generated(
-    sc: SparkContext,
-    num_records: int,
-    num_partitions: int,
-    num_keys: int = NUM_KEYS,
-    skew_ratio: float = SKEW_RATIO,
-    hot_key: int = HOT_KEY,
-) -> RDD:
-    """
-    在 Spark 中生成带热点 key 的倾斜 (key, value) RDD。
-    与 range_basic 保持一致：
-      - 前 skew_ratio * num_records 条记录都是热点 key hot_key
-      - 剩余记录均匀分布到 1..num_keys-1
-      - value = 1
-    """
-    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
-    threshold = int(num_records * skew_ratio)
-
-    def map_to_kv(i: int):
-        if i < threshold:
-            k = hot_key
-        else:
-            k = 1 + int(i % (num_keys - 1))
-        v = 1
-        return k, v
-
-    rdd = base_rdd.map(map_to_kv)
-    return rdd
-
-
-# ---------- 分区分布统计，与 range_basic 保持一致 ----------
-
-def compute_partition_distribution(rdd: RDD) -> List[Tuple[int, int]]:
-    def count_in_partition(pid: int, it):
-        cnt = 0
-        for _ in it:
-            cnt += 1
-        yield pid, cnt
-
-    dist_rdd = rdd.mapPartitionsWithIndex(count_in_partition)
-    return sorted(dist_rdd.collect(), key=lambda x: x[0])
-
-
 # ---------- 自定义 skew-aware 分区逻辑 ----------
 
 def parse_hot_keys(hot_keys_str: str) -> Set[int]:
@@ -189,7 +110,12 @@ def custom_partition_func(num_partitions: int, hot_keys: Set[int], hot_bucket_fa
         """
         orig_key, sub_bucket = wrapped_key
         if orig_key in hot_keys:
-            # 对热点 key，根据 sub_bucket 扩散
+            # 对单热点 key 且桶数足够多的情况，更激进地把流量摊到所有分区：
+            # 直接使用 sub_bucket 在 [0, num_partitions) 上取模。
+            # 这样 95%+ 的热点流量可以几乎平均打到所有分区上。
+            if len(hot_keys) == 1 and hot_bucket_factor >= num_partitions:
+                return sub_bucket % num_partitions
+            # 通用情况：在原始 hash 分区附近做局部扩散
             base = hash(orig_key) % num_partitions
             offset = sub_bucket % hot_bucket_factor
             return (base + offset) % num_partitions
@@ -342,6 +268,18 @@ def main():
         raise ValueError(f"Unsupported input-type: {args.input_type}")
 
     hot_keys = parse_hot_keys(args.hot_keys)
+
+    # 如果用户没有显式指定热点 key 且当前是倾斜数据，
+    # 则自动将数据生成时使用的 HOT_KEY 作为热点 key。
+    if not hot_keys and args.input_type == "skewed":
+        hot_keys = {HOT_KEY}
+
+    # 对单热点倾斜场景，更激进地放大 hot_bucket_factor，
+    # 以便热点 key 的流量可以在更多分区上摊开。
+    if len(hot_keys) == 1 and args.input_type == "skewed":
+        # 至少不要比分区数小，这样在 partitioner 里就有机会
+        # 直接把热点流量摊到所有分区。
+        args.hot_bucket_factor = max(args.hot_bucket_factor, args.num_partitions)
 
     # 运行实验
     metrics = run_custom_experiment(
