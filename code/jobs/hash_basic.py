@@ -12,7 +12,7 @@ from pyspark.rdd import RDD
 # - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
 # - HOT_KEY: 倾斜数据中的热点 key
 NUM_KEYS = 1000
-SKEW_RATIO = 0.85
+SKEW_RATIO = 0.95
 HOT_KEY = 0
 
 
