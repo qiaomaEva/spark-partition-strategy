@@ -140,7 +140,6 @@ def run_custom_experiment(
     metrics["t_agg"] = t3 - t2
     metrics["t_total"] = (metrics["t_partition"]) + (t3 - t2)
 
-<<<<<<< HEAD
     # 聚合后分区分布（注意这里的 key 还是 (key, sub_bucket)）
     metrics["partition_distribution_after_reduce_raw"] = compute_partition_distribution(aggregated_rdd)
 

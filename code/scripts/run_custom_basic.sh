@@ -19,11 +19,7 @@ MASTER="spark://172.24.49.56:7077"
 # 1. 运行 Custom 实验
 echo "[run_custom_basic] Submitting job to $MASTER..."
 spark-submit \
-<<<<<<< HEAD
-  --master local[*] \
-=======
   --master $MASTER \
->>>>>>> f2d8558 (使用datagen生成数据集保存至各个节点，并修改code中对应部分代码)
   code/jobs/custom_basic.py \
   "$@"
 
