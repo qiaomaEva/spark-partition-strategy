@@ -1,78 +1,37 @@
 from typing import List, Tuple
-
 from pyspark import SparkContext
+from pyspark.sql import SparkSession
 from pyspark.rdd import RDD
 
-# 统一的数据分布相关常量
-# - NUM_KEYS: key 取值范围 0 ~ NUM_KEYS-1
-# - SKEW_RATIO: 倾斜数据中，多少比例的记录落在热点 key 上
-# - HOT_KEY: 倾斜数据中的热点 key
+# 统一的数据分布相关常量 (保留用于 DataGen 或其他参考)
 NUM_KEYS: int = 1000
 SKEW_RATIO: float = 0.95
 HOT_KEY: int = 0
 
 
-def build_synthetic_rdd(sc: SparkContext, num_records: int, num_partitions: int) -> RDD:
-    """构造一个简单的 (key, value) RDD：
-    - key: 0 ~ 9 循环
-    - value: 序号本身
-    用于最简单的功能验证。
+def load_rdd_from_parquet(spark: SparkSession, input_path: str, num_partitions: int = None) -> RDD:
     """
-    data = [(i % 10, i) for i in range(num_records)]
-    return sc.parallelize(data, numSlices=num_partitions)
-
-
-def build_uniform_rdd_generated(
-    sc: SparkContext,
-    num_records: int,
-    num_partitions: int,
-    num_keys: int = NUM_KEYS,
-) -> RDD:
-    """在 Spark 中生成“均匀”分布的 (key, value) RDD。
-
-    实现与 range_basic / hash_basic / custom_basic 保持一致：
-    - 用 sc.range 生成 [0, num_records) 的 long 序列
-    - key = i % num_keys
-    - value = 1
+    从 Parquet 文件加载数据并转换为 (key, value) 的 RDD。
+    
+    Args:
+        spark: SparkSession 对象
+        input_path: 数据路径 (例如 file:///data/uniform)
+        num_partitions: 如果指定，读取后进行 repartition，保证实验并行度一致
     """
-    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
-
-    def map_to_kv(i: int):
-        k = int(i % num_keys)
-        v = 1
-        return k, v
-
-    return base_rdd.map(map_to_kv)
-
-
-def build_skewed_rdd_generated(
-    sc: SparkContext,
-    num_records: int,
-    num_partitions: int,
-    num_keys: int = NUM_KEYS,
-    skew_ratio: float = SKEW_RATIO,
-    hot_key: int = HOT_KEY,
-) -> RDD:
-    """在 Spark 中生成带热点 key 的倾斜 (key, value) RDD。
-
-    思路与各 basic 脚本保持一致：
-    - 总记录数 num_records
-    - 前 skew_ratio * num_records 条记录都给热点 key（hot_key）
-    - 剩余记录均匀分布到其它 key（1..num_keys-1），避免与 hot_key 冲突
-    - value = 1
-    """
-    base_rdd = sc.range(0, num_records, numSlices=num_partitions)
-    threshold = int(num_records * skew_ratio)
-
-    def map_to_kv(i: int):
-        if i < threshold:
-            k = hot_key
-        else:
-            k = 1 + int(i % (num_keys - 1))
-        v = 1
-        return k, v
-
-    return base_rdd.map(map_to_kv)
+    # 读取 Parquet
+    df = spark.read.parquet(input_path)
+    
+    # 转换为 RDD: Row(key=..., value=...) -> (key, value)
+    rdd = df.rdd.map(lambda row: (row.key, row.value))
+    
+    # 如果需要强制分区数（实验通常需要固定的分区数来控制变量）
+    if num_partitions is not None:
+        current_partitions = rdd.getNumPartitions()
+        if current_partitions != num_partitions:
+            # 使用 coalesce 减少分区，或 repartition 增加分区/shuffle
+            rdd = rdd.repartition(num_partitions)
+            
+    return rdd
 
 
 def compute_partition_distribution(rdd: RDD) -> List[Tuple[int, int]]:
