@@ -27,7 +27,7 @@ export PYTHONPATH="$(pwd)/code:${PYTHONPATH:-}"
 # 1. 运行 Range 实验
 # 本地测试时可以改为 --master local[*]
 spark-submit \
-  --master spark://172.24.49.56:7077 \
+  --master local[*] \
   code/jobs/range_basic.py \
   "$@"
 

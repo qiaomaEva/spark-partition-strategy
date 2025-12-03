@@ -205,13 +205,10 @@ def run_custom_experiment(
     # 聚合后分区分布（注意这里的 key 还是 (key, sub_bucket)）
     metrics["partition_distribution_after_reduce_raw"] = compute_partition_distribution(aggregated_rdd)
 
-    # 还原回按原始 key 聚合（可选；主要用于最终结果展示）
-    final_rdd = unwrap_keys_after_agg(aggregated_rdd)
-    
-    # 统计最终结果的分区分布
-    metrics["partition_distribution_final"] = compute_partition_distribution(final_rdd)
-
-    metrics["result_rdd"] = final_rdd
+    # 为了和 hash 实验的算子链更可比，这里先不做第二轮 unwrap+reduce，
+    # 直接把 aggregated_rdd 当作最终结果。
+    metrics["partition_distribution_final"] = metrics["partition_distribution_after_reduce_raw"]
+    metrics["result_rdd"] = aggregated_rdd
     return metrics
 
 

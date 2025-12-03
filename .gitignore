@@ -36,7 +36,10 @@ Thumbs.db
 
 # Spark data and logs
 data/
-# logs/spark-events/
+logs/spark-events/
 
 # Results (如果需要把实验结果 JSON 上传到仓库，就删掉这一行)
 # code/results/*.json
+
+results_85/
+results_95/

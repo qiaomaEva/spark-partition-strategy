@@ -16,12 +16,13 @@
 """
 
 import os
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
 RESULTS_DIR = os.path.join("code", "results")
+FIGURES_DIR = os.path.join("docs", "figures")
 SUMMARY_CSV = os.path.join(RESULTS_DIR, "summary_metrics.csv")
 
 
@@ -37,18 +38,25 @@ def _select_latest_by_strategy(
     data_type: str,
     records_tag: str,
     partitions: str,
-    bucket_factor: str | None = None,
+    bucket_factor: Optional[str] = None,
 ) -> pd.DataFrame:
+    # 先只按场景过滤（data_type / records_tag / partitions）
     mask = (
         (df["data_type"] == data_type)
         & (df["records_tag"] == records_tag)
         & (df["partitions"].astype(str) == str(partitions))
     )
-    if bucket_factor is not None:
-        # 只保留给定 bucket_factor（例如 b4/b8/b32）的一组 Custom 结果
-        mask = mask & (df["bucket_factor"].astype(str) == str(bucket_factor))
-
     subset = df[mask]
+
+    # 如果指定了 bucket_factor，只收紧 custom 的那一部分，
+    # hash / range 不需要有 bucket_factor 这一列
+    if bucket_factor is not None:
+        bf_str = str(bucket_factor)
+        if not bf_str.startswith("b"):
+            bf_str = f"b{bf_str}"
+
+        is_custom = subset["strategy"] == "custom"
+        subset = subset[~is_custom | (subset["bucket_factor"].astype(str) == bf_str)]
     if subset.empty:
         desc = f"{data_type} / {records_tag} / p{partitions}"
         if bucket_factor is not None:
@@ -57,10 +65,13 @@ def _select_latest_by_strategy(
         return pd.DataFrame()
 
     subset = subset.sort_values("file")
-    latest_by_strategy = subset.groupby("strategy").tail(1)
+    # groupby.tail may return a view; make an explicit copy to avoid
+    # SettingWithCopyWarning when we assign into the DataFrame below.
+    latest_by_strategy = subset.groupby("strategy").tail(1).copy()
 
     strategy_order = ["hash", "range", "custom"]
-    latest_by_strategy["strategy"] = pd.Categorical(
+    # use .loc to assign to the column explicitly on the DataFrame copy
+    latest_by_strategy.loc[:, "strategy"] = pd.Categorical(
         latest_by_strategy["strategy"], categories=strategy_order, ordered=True
     )
     latest_by_strategy = latest_by_strategy.sort_values("strategy")
@@ -86,8 +97,8 @@ def _bar_plot(
     plt.title(title, fontsize=11, wrap=True)
     plt.grid(axis="y", linestyle="--", alpha=0.4)
 
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    out_path = os.path.join(RESULTS_DIR, out_name)
+    os.makedirs(FIGURES_DIR, exist_ok=True)
+    out_path = os.path.join(FIGURES_DIR, out_name)
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
@@ -168,7 +179,8 @@ def main():
 
     # 第二类：同一 skewed 场景下，对比不同 bucket_factor 的 Custom（b4/b8/b32）
     # x 轴为 bucket_factor，y 为各项指标
-    skew_custom_buckets = ["4", "8", "32"]
+    # 这里 bucket_factor 在 CSV 中统一存储为 "b4" / "b8" / "b32" 这样的格式
+    skew_custom_buckets = ["b4", "b8", "b32"]
     skew_name = "skewed_5m_p64_custom_buckets"
     data_type = "skewed"
     records_tag = "5m"
@@ -195,7 +207,8 @@ def main():
         col = m["col"]
         label = m["label"]
 
-        xs = [f"b{b}" for b in latest_by_b["bucket_factor"].astype(str).tolist()]
+        # bucket_factor 本身已经是 "b4" / "b8" / "b32"，直接作为 x 轴标签
+        xs = [str(b) for b in latest_by_b["bucket_factor"].astype(str).tolist()]
         ys = latest_by_b[col].tolist()
 
         plt.figure(figsize=(5.5, 4))
@@ -208,8 +221,8 @@ def main():
         plt.title(title, fontsize=11, wrap=True)
         plt.grid(axis="y", linestyle="--", alpha=0.4)
 
-        os.makedirs(RESULTS_DIR, exist_ok=True)
-        out_path = os.path.join(RESULTS_DIR, f"{col}_{skew_name}.png")
+        os.makedirs(FIGURES_DIR, exist_ok=True)
+        out_path = os.path.join(FIGURES_DIR, f"{col}_{skew_name}.png")
         plt.tight_layout()
         plt.savefig(out_path, dpi=150)
         plt.close()

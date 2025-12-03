@@ -28,7 +28,7 @@ export PYTHONPATH="$(pwd)/code:${PYTHONPATH:-}"
 #--master spark://172.24.49.56:7077
 # 本地测试时可以改为 --master local[*]
 spark-submit \
-  --master spark://172.24.49.56:7077 \
+  --master local[*] \
   code/jobs/hash_basic.py \
   "$@"
 
