@@ -16,20 +16,42 @@
 """
 
 import os
+import sys
 from typing import List, Dict, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-RESULTS_DIR = os.path.join("code", "results")
-FIGURES_DIR = os.path.join("docs", "figures")
-SUMMARY_CSV = os.path.join(RESULTS_DIR, "summary_metrics.csv")
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_CODE_DIR = os.path.abspath(os.path.join(_SCRIPT_DIR, ".."))
+if _CODE_DIR not in sys.path:
+    sys.path.insert(0, _CODE_DIR)
+
+from jobs.common import SKEW_RATIO
 
 
-def _ensure_summary_exists():
-    if not os.path.isfile(SUMMARY_CSV):
+def derive_skew_tag() -> str:
+    try:
+        ratio = float(SKEW_RATIO)
+    except Exception as exc:
+        raise RuntimeError("Cannot derive skew tag from SKEW_RATIO") from exc
+    if ratio <= 0:
+        raise RuntimeError("SKEW_RATIO must be positive to derive figure paths")
+    return str(int(round(ratio * 100)))
+
+
+def _resolve_paths() -> Dict[str, str]:
+    skew_tag = derive_skew_tag()
+    results_dir = os.path.join("code", f"results_{skew_tag}")
+    figures_dir = os.path.join("docs", f"figures_{skew_tag}")
+    summary_csv = os.path.join(results_dir, "summary_metrics.csv")
+    return {"results_dir": results_dir, "figures_dir": figures_dir, "summary_csv": summary_csv}
+
+
+def _ensure_summary_exists(summary_csv: str):
+    if not os.path.isfile(summary_csv):
         raise FileNotFoundError(
-            f"{SUMMARY_CSV} not found. Please run summarize_results.py first."
+            f"{summary_csv} not found. Please run summarize_results.py first."
         )
 
 
@@ -84,6 +106,7 @@ def _bar_plot(
     title: str,
     out_name: str,
     ylabel: str,
+    figures_dir: str,
 ):
     if df.empty:
         return
@@ -97,8 +120,8 @@ def _bar_plot(
     plt.title(title, fontsize=11, wrap=True)
     plt.grid(axis="y", linestyle="--", alpha=0.4)
 
-    os.makedirs(FIGURES_DIR, exist_ok=True)
-    out_path = os.path.join(FIGURES_DIR, out_name)
+    os.makedirs(figures_dir, exist_ok=True)
+    out_path = os.path.join(figures_dir, out_name)
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
@@ -106,8 +129,12 @@ def _bar_plot(
 
 
 def main():
-    _ensure_summary_exists()
-    df = pd.read_csv(SUMMARY_CSV)
+    paths = _resolve_paths()
+    figures_dir = paths["figures_dir"]
+    summary_csv = paths["summary_csv"]
+
+    _ensure_summary_exists(summary_csv)
+    df = pd.read_csv(summary_csv)
 
     # ===== 在这里配置你要画的“场景” =====
     # 以后增加新场景，只需要在这个列表里加一行
@@ -175,6 +202,7 @@ def main():
                 title=title,
                 out_name=out_name,
                 ylabel=label,
+                figures_dir=figures_dir,
             )
 
     # 第二类：同一 skewed 场景下，对比不同 bucket_factor 的 Custom（b4/b8/b32）
@@ -221,8 +249,8 @@ def main():
         plt.title(title, fontsize=11, wrap=True)
         plt.grid(axis="y", linestyle="--", alpha=0.4)
 
-        os.makedirs(FIGURES_DIR, exist_ok=True)
-        out_path = os.path.join(FIGURES_DIR, f"{col}_{skew_name}.png")
+        os.makedirs(figures_dir, exist_ok=True)
+        out_path = os.path.join(figures_dir, f"{col}_{skew_name}.png")
         plt.tight_layout()
         plt.savefig(out_path, dpi=150)
         plt.close()

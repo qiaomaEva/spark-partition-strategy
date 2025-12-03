@@ -24,12 +24,26 @@ import csv
 import json
 import os
 import re
+import sys
 from glob import glob
 from typing import Dict, Any, List, Optional
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_CODE_DIR = os.path.abspath(os.path.join(_SCRIPT_DIR, ".."))
+if _CODE_DIR not in sys.path:
+    sys.path.insert(0, _CODE_DIR)
 
-RESULTS_DIR = os.path.join("code", "results")
-OUTPUT_CSV = os.path.join(RESULTS_DIR, "summary_metrics.csv")
+from jobs.common import SKEW_RATIO
+
+
+def derive_skew_tag() -> str:
+    try:
+        ratio = float(SKEW_RATIO)
+    except Exception as exc:
+        raise RuntimeError("Cannot derive skew tag from SKEW_RATIO") from exc
+    if ratio <= 0:
+        raise RuntimeError("SKEW_RATIO must be positive to derive results directory")
+    return str(int(round(ratio * 100)))
 
 
 def parse_filename(path: str) -> Dict[str, Optional[str]]:
@@ -134,13 +148,16 @@ def extract_metrics_from_json(path: str) -> Dict[str, Any]:
 
 
 def main() -> None:
-    if not os.path.isdir(RESULTS_DIR):
-        print(f"[summarize_results] Results directory not found: {RESULTS_DIR}")
+    skew_tag = derive_skew_tag()
+    results_dir = os.path.join("code", f"results_{skew_tag}")
+
+    if not os.path.isdir(results_dir):
+        print(f"[summarize_results] Results directory not found: {results_dir}")
         return
 
-    paths = sorted(glob(os.path.join(RESULTS_DIR, "*.json")))
+    paths = sorted(glob(os.path.join(results_dir, "*.json")))
     if not paths:
-        print(f"[summarize_results] No JSON result files found in {RESULTS_DIR}")
+        print(f"[summarize_results] No JSON result files found in {results_dir}")
         return
 
     rows: List[Dict[str, Any]] = []
@@ -165,7 +182,7 @@ def main() -> None:
         print("[summarize_results] No valid result rows to write.")
         return
 
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+    os.makedirs(results_dir, exist_ok=True)
 
     fieldnames = [
         "file",
@@ -191,13 +208,14 @@ def main() -> None:
         "task_max_ms",
     ]
 
-    with open(OUTPUT_CSV, "w", encoding="utf-8", newline="") as f:
+    output_csv = os.path.join(results_dir, "summary_metrics.csv")
+    with open(output_csv, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
 
-    print(f"[summarize_results] Wrote {len(rows)} rows to {OUTPUT_CSV}")
+    print(f"[summarize_results] Wrote {len(rows)} rows to {output_csv}")
 
 
 if __name__ == "__main__":

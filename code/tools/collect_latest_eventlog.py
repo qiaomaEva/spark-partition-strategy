@@ -27,6 +27,13 @@ import subprocess
 import sys
 from datetime import datetime
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_CODE_DIR = os.path.abspath(os.path.join(_SCRIPT_DIR, ".."))
+if _CODE_DIR not in sys.path:
+    sys.path.insert(0, _CODE_DIR)
+
+from jobs.common import SKEW_RATIO
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Collect latest Spark event log and export metrics JSON.")
@@ -42,18 +49,22 @@ def parse_args() -> argparse.Namespace:
         help="directory where Spark event logs are stored (default: logs/spark-events)",
     )
     parser.add_argument(
-        "--results-dir",
-        type=str,
-        default="code/results",
-        help="directory to write JSON result files (default: code/results)",
-    )
-    parser.add_argument(
         "--tag",
         type=str,
         default="",
         help="optional custom tag to embed in filename, e.g. uniform_p128_10m",
     )
     return parser.parse_args()
+
+
+def derive_skew_tag() -> str:
+    try:
+        ratio = float(SKEW_RATIO)
+    except Exception as exc:
+        raise RuntimeError("Impossible to derive skew tag from SKEW_RATIO") from exc
+    if ratio <= 0:
+        raise RuntimeError("SKEW_RATIO must be positive to determine results directory")
+    return str(int(round(ratio * 100)))
 
 
 def find_latest_event_log(event_dir: str) -> str:
@@ -88,7 +99,9 @@ def main() -> None:
     args = parse_args()
 
     event_dir = args.event_dir
-    results_dir = args.results_dir
+
+    skew_tag = derive_skew_tag()
+    results_dir = os.path.join("code", f"results_{skew_tag}")
     strategy = args.strategy
     tag = args.tag
 
