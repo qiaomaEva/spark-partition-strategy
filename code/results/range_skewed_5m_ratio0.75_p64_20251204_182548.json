@@ -1,0 +1,103 @@
+{
+  "job_count": 9,
+  "stage_count": 12,
+  "task_count": 645,
+  "job_durations_ms": [
+    {
+      "jobId": "0",
+      "duration_ms": 3798
+    },
+    {
+      "jobId": "1",
+      "duration_ms": 36437
+    },
+    {
+      "jobId": "2",
+      "duration_ms": 7394
+    },
+    {
+      "jobId": "3",
+      "duration_ms": 7302
+    },
+    {
+      "jobId": "4",
+      "duration_ms": 18474
+    },
+    {
+      "jobId": "5",
+      "duration_ms": 7588
+    },
+    {
+      "jobId": "6",
+      "duration_ms": 13977
+    },
+    {
+      "jobId": "7",
+      "duration_ms": 5231
+    },
+    {
+      "jobId": "8",
+      "duration_ms": 5347
+    }
+  ],
+  "stage_durations_ms": [
+    {
+      "stageId": "0",
+      "duration_ms": 3694
+    },
+    {
+      "stageId": "1",
+      "duration_ms": 27388
+    },
+    {
+      "stageId": "2",
+      "duration_ms": 8960
+    },
+    {
+      "stageId": "4",
+      "duration_ms": 7373
+    },
+    {
+      "stageId": "6",
+      "duration_ms": 7285
+    },
+    {
+      "stageId": "8",
+      "duration_ms": 11005
+    },
+    {
+      "stageId": "9",
+      "duration_ms": 7436
+    },
+    {
+      "stageId": "12",
+      "duration_ms": 7580
+    },
+    {
+      "stageId": "15",
+      "duration_ms": 8504
+    },
+    {
+      "stageId": "16",
+      "duration_ms": 5453
+    },
+    {
+      "stageId": "20",
+      "duration_ms": 5224
+    },
+    {
+      "stageId": "24",
+      "duration_ms": 5327
+    }
+  ],
+  "total_shuffle_read_bytes": 0,
+  "total_shuffle_write_bytes": 6645525,
+  "task_duration_stats_ms": {
+    "min_ms": 200,
+    "p50_ms": 382,
+    "p90_ms": 689,
+    "p99_ms": 1954,
+    "max_ms": 27295,
+    "count": 645
+  }
+}

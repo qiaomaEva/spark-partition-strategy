@@ -1,0 +1,83 @@
+{
+  "job_count": 6,
+  "stage_count": 10,
+  "task_count": 133,
+  "job_durations_ms": [
+    {
+      "jobId": "0",
+      "duration_ms": 4172
+    },
+    {
+      "jobId": "1",
+      "duration_ms": 16712
+    },
+    {
+      "jobId": "2",
+      "duration_ms": 8631
+    },
+    {
+      "jobId": "3",
+      "duration_ms": 4953
+    },
+    {
+      "jobId": "4",
+      "duration_ms": 1819
+    },
+    {
+      "jobId": "5",
+      "duration_ms": 3323
+    }
+  ],
+  "stage_durations_ms": [
+    {
+      "stageId": "0",
+      "duration_ms": 4078
+    },
+    {
+      "stageId": "1",
+      "duration_ms": 14002
+    },
+    {
+      "stageId": "2",
+      "duration_ms": 2625
+    },
+    {
+      "stageId": "4",
+      "duration_ms": 6278
+    },
+    {
+      "stageId": "5",
+      "duration_ms": 2324
+    },
+    {
+      "stageId": "8",
+      "duration_ms": 3164
+    },
+    {
+      "stageId": "9",
+      "duration_ms": 1755
+    },
+    {
+      "stageId": "13",
+      "duration_ms": 1804
+    },
+    {
+      "stageId": "17",
+      "duration_ms": 1709
+    },
+    {
+      "stageId": "18",
+      "duration_ms": 1588
+    }
+  ],
+  "total_shuffle_read_bytes": 0,
+  "total_shuffle_write_bytes": 0,
+  "task_duration_stats_ms": {
+    "min_ms": 266,
+    "p50_ms": 497,
+    "p90_ms": 1523,
+    "p99_ms": 13817,
+    "max_ms": 13911,
+    "count": 133
+  }
+}
