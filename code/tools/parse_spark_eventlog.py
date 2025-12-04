@@ -18,6 +18,11 @@ def parse_event_log(path: str) -> Dict[str, Any]:
     stages: Dict[str, Dict[str, Any]] = {}
     tasks: List[Dict[str, Any]] = []
 
+    # 全局累加 Shuffle 读写量：按 Task 级别聚合更可靠，
+    # 不再依赖 StageInfo 上是否带聚合后的 TaskMetrics。
+    total_shuffle_read = 0
+    total_shuffle_write = 0
+
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -47,12 +52,6 @@ def parse_event_log(path: str) -> Dict[str, Any]:
                 stage_id = str(stage_info.get("Stage ID"))
                 stages[stage_id] = stages.get(stage_id, {})
                 stages[stage_id]["completionTime"] = stage_info.get("Completion Time")
-                # Shuffle 读写量在 Stage 级别的累积里
-                task_metrics = stage_info.get("Task Metrics", {})
-                shuffle_read = task_metrics.get("Shuffle Read Metrics", {}).get("Total Bytes Read", 0)
-                shuffle_write = task_metrics.get("Shuffle Write Metrics", {}).get("Shuffle Bytes Written", 0)
-                stages[stage_id]["shuffle_read_bytes"] = shuffle_read
-                stages[stage_id]["shuffle_write_bytes"] = shuffle_write
 
             # Task end (用于统计 task durations / tail tasks)
             elif event_type == "SparkListenerTaskEnd":
@@ -64,6 +63,12 @@ def parse_event_log(path: str) -> Dict[str, Any]:
                 duration = None
                 if launch_time is not None and finish_time is not None:
                     duration = finish_time - launch_time
+
+                # 累加 Task 级别的 Shuffle 读写量
+                shuffle_read = task_metrics.get("Shuffle Read Metrics", {}).get("Total Bytes Read", 0) or 0
+                shuffle_write = task_metrics.get("Shuffle Write Metrics", {}).get("Shuffle Bytes Written", 0) or 0
+                total_shuffle_read += shuffle_read
+                total_shuffle_write += shuffle_write
 
                 tasks.append(
                     {
@@ -87,16 +92,11 @@ def parse_event_log(path: str) -> Dict[str, Any]:
             job_durations.append({"jobId": job_id, "duration_ms": ct - st})
 
     stage_durations = []
-    total_shuffle_read = 0
-    total_shuffle_write = 0
     for stage_id, info in stages.items():
         st = info.get("submissionTime")
         ct = info.get("completionTime")
         if st is not None and ct is not None:
             stage_durations.append({"stageId": stage_id, "duration_ms": ct - st})
-
-        total_shuffle_read += info.get("shuffle_read_bytes", 0)
-        total_shuffle_write += info.get("shuffle_write_bytes", 0)
 
     # Task durations（用于 tail task 分析）
     task_durations = [t["duration"] for t in tasks if t["duration"] is not None]
