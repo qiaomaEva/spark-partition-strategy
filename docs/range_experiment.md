@@ -50,26 +50,42 @@ spark-partition-strategy/
 
 ---
 
-## 2. range_basic.py：核心逻辑与指标
+## 2. range_basic.py：核心逻辑与算子链
 
-`code/jobs/range_basic.py` 实现了一个基础的 Range-like 分区实验，主要特点：
+`code/jobs/range_basic.py` 实现了一个基础的 Range-like 分区实验。为了与 Hash / Custom 两个实验做**公平对比**，三个作业在算子链上保持完全一致，统一为：
 
-- 使用 `sortByKey(numPartitions=...)` 模拟 RangePartitioner 行为；
-- 支持三种输入类型（**均在 Spark 内部生成，不再依赖 CSV 文件**）：
-  - `synthetic`：简单的 `(key, value)` 测试数据，用于功能验证；
-  - `uniform`：通过 `sc.range` + `NUM_KEYS` 在 Spark 内部生成均匀分布的 `(key, value)`；
-  - `skewed`：通过 `sc.range` + `NUM_KEYS` + `SKEW_RATIO` + `HOT_KEY` 在 Spark 内部生成带热点 key 的倾斜数据；
- 支持常用命令行参数：
-  - `--input-type {synthetic, uniform, skewed}`：三种数据生成模式（全部在 Spark 内部生成）
-  - `--num-records`：三种 input-type 共用，控制生成记录条数
-  - `--num-partitions`：控制 RDD / `sortByKey` 的分区数
-  - `--print-sample`：是否打印结果样本，仅本地调试使用；
-  - `t_sort_seconds`：`sortByKey` 耗时；
-  - `t_agg_seconds`：`reduceByKey` 耗时；
-  - `t_total_seconds_approx`：两者之和（近似总耗时）；
-  - `partition_distribution_before`：原始 RDD 各分区记录数；
-  - `partition_distribution_after_sort`：`sortByKey` 后各分区记录数；
-  - `partition_distribution_after_reduce`：`reduceByKey` 后各分区记录数。
+> `Parquet 数据读取 → (key, value) RDD → 首次重分区/排序 → 第一次 reduceByKey → 第二次 reduceByKey`
+
+对于 Range 实验，这条流水线具体为：
+
+1. **读取数据**：
+  - 通过公共工具函数 `load_rdd_from_parquet` 从 Parquet 加载 `(key, value)` RDD，并用相同的 `num-partitions` 进行初始 repartition；
+2. **Range 分区阶段（sortByKey）**：
+  - 调用 `rdd.sortByKey(numPartitions=...)`，触发基于 RangePartitioner 的 Shuffle；
+  - 通过 `sorted_rdd.count()` 触发 Action，记录 `t_sort`（排序+Range 分区阶段的耗时）；
+  - 使用 `compute_partition_distribution` 记录 `partition_distribution_before` 与 `partition_distribution_after_sort`；
+3. **第一次聚合（reduceByKey）**：
+  - 在已按 key 有序且 Range 分区后的 RDD 上调用 `reduceByKey`，并通过 `count()` 触发 Action，得到 `t_agg`；
+4. **第二次 reduceByKey（用于 Stage 对齐）**：
+  - 再次对第一次聚合结果调用 `reduceByKey`，在 DAG 中形成与 Hash / Custom 实验一致的额外 Stage，便于比较 Stage 划分与 Shuffle 行为；
+5. **最终分区分布**：
+  - 记录 `partition_distribution_after_reduce` 与 `partition_distribution_final`，字段含义与 Hash / Custom 输出保持一致。
+
+**支持的命令行参数（v3）**：
+
+- `--input-path`：Parquet 输入路径，由 `run_range_basic.sh` 自动推导；
+- `--input-type`：仅作为日志标签（例如 `uniform` / `skewed`）；
+- `--num-partitions`：`sortByKey` 的分区数（与 Hash / Custom 一致）；
+- `--print-sample`：是否打印部分结果（调试用）。
+
+**控制台输出的关键指标（v3）**：
+
+- `t_sort`：`sortByKey`（Range 分区阶段）的耗时；
+- `t_agg`：第一次 `reduceByKey` 的耗时；
+- `t_total`：`t_sort + t_agg` 的近似总耗时；
+- `partition_distribution_before`：原始 RDD 各分区记录数；
+- `partition_distribution_after_sort`：`sortByKey` 后各分区记录数；
+- `partition_distribution_after_reduce` / `partition_distribution_final`：第一次 / 第二次 reduce 后的分区分布。
 
 此外，`range_basic.py` 中通过 `SparkConf` 开启了 **Spark 事件日志**：
 
@@ -96,9 +112,9 @@ conf = (
 
 ```text
 ===== RangePartitioner Basic Experiment (by C) =====
+Input path     : file:///home/xxx/spark-data/uniform_2m_ratio0.0
 Input type     : uniform
-Num records    : 200000
-Num partitions : 8
+Num partitions : 16
 Print sample   : True
 ```
 
@@ -120,65 +136,33 @@ Print sample   : True
 > 对 A / D 同学来说，只要记住：  
 > **“跑 Range = 调 `run_range_basic.sh`，结果 JSON 自动出现在 `code/results/`。”**
 
-### 3.2 本地调试示例（local 模式）
+### 3.2 示例命令（与 Hash / Custom 对齐）
 
-在 WSL / 本地 Linux 环境中，可以先将脚本里的 `--master` 改为 `local[*]`，然后运行小规模测试：
-
-```bash
-cd ~/spark-partition-strategy
-
-code/scripts/run_range_basic.sh \
-  --input-type synthetic \
-  --num-records 200000 \
-  --num-partitions 8 \
-  --print-sample
-```
-
-也可以直接调试内部生成的均匀 / 倾斜数据：
-
-```bash
-# uniform 数据（Spark 内部生成）
-code/scripts/run_range_basic.sh \
-  --input-type uniform \
-  --num-records 200000 \
-  --num-partitions 8 \
-  --print-sample
-
-# skewed 数据（Spark 内部生成，使用 NUM_KEYS / SKEW_RATIO / HOT_KEY）
-code/scripts/run_range_basic.sh \
-  --input-type skewed \
-  --num-records 200000 \
-  --num-partitions 8 \
-  --print-sample
-```
-
-运行结束后，可以在 `code/results/` 下看到自动生成的 `range_*.json` 文件。
-
-### 3.3 集群实验示例（Master 环境）
-
-在 Master 节点上（假设项目路径为 `~/spark-partition-strategy`，且脚本中的 `--master` 已设为 `spark://172.23.166.104:7078`）：
+在本地或 Master 节点上，可以通过 `run_range_basic.sh` 运行与 Hash / Custom 完全对齐的实验配置。脚本会根据 `--data-type` / `--num-records` / `--skew-ratio` / `--num-partitions` 自动推导 `--input-path`，无需手动填写。
 
 ```bash
 cd ~/spark-partition-strategy
 
-# 均匀分布大数据示例：
+# 均匀分布（uniform, 2m, p16）
 code/scripts/run_range_basic.sh \
-  --input-type uniform \
-  --num-records 10000000 \
-  --num-partitions 128
+  --data-type uniform \
+  --num-records 2000000 \
+  --skew-ratio 0.0 \
+  --num-partitions 16
 
-# 倾斜分布大数据示例：
+# 倾斜分布（skewed, 5m, p64, 温和倾斜或极端倾斜由 skew-ratio 控制）
 code/scripts/run_range_basic.sh \
-  --input-type skewed \
-  --num-records 10000000 \
-  --num-partitions 128
+  --data-type skewed \
+  --num-records 5000000 \
+  --skew-ratio 0.75 \
+  --num-partitions 64
 ```
 
-每次运行结束后：
+运行结束后：
 
-- 控制台可以看到 `range_basic.py` 打印的基本指标和分区分布；
+- 控制台可以看到 `range_basic.py` 打印的时间与分区分布信息；
 - `logs/spark-events/` 中会新增一个 event log；
-- `code/results/` 中会自动新增一个 `range_*.json` 结果文件。
+- `code/results/` 中会自动新增一个 `range_*.json` 结果文件，文件名中包含数据类型、规模、倾斜度（ratio）和分区数，方便与 Hash / Custom 的结果做一一对应的对比。
 
 ---
 

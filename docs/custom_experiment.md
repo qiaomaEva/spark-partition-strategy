@@ -32,9 +32,13 @@ Custom 实验主要涉及以下文件：
 
 ---
 
-## 2. custom_basic.py：核心逻辑与指标
+## 2. custom_basic.py：核心逻辑与算子链
 
-`code/jobs/custom_basic.py` 实现了一个**针对倾斜数据优化，同时兼顾均匀数据**的自定义分区实验，主要特点：
+`code/jobs/custom_basic.py` 实现了一个**针对倾斜数据优化，同时兼顾均匀数据**的自定义分区实验。为了与 Hash / Range 两个实验在算子链上保持完全一致，Custom 作业同样遵循统一的流水线：
+
+> `Parquet 数据读取 → (key, value) RDD → 首次重分区/排序 → 第一次 reduceByKey → 第二次 reduceByKey`
+
+与 Hash / Range 的区别只在于“首次重分区”的实现方式：这里使用自定义的 skew-aware partitioner 和热点拆桶逻辑，其余聚合/还原步骤保持一致，确保 Job/Stage/Task 指标的对比是公平的。
 
 ### 2.1 自定义策略思想（skew-aware）
 
@@ -50,47 +54,59 @@ Custom 实验主要涉及以下文件：
 - **倾斜场景**：通过为热点 key 拆桶，使其负载更均匀；  
 - **均匀场景**：如果不指定热点 key，自定义分区器和标准 hash 分区几乎等价。
 
-### 2.2 输入类型与参数
+### 2.2 输入参数（与 Hash / Range 对齐）
 
-Custom 与 Range 一样，使用 Spark **内部生成**的数据，不再依赖外部 CSV：
+Custom 作业使用从 Parquet 读取的 `(key, value)` 数据，与 Hash / Range 共用同一批数据文件（由 `code/data_gen/DataGen.py` 生成），因此命令行参数也与另外两个实验对齐：
 
-- `--input-type {synthetic, uniform, skewed}`：三种数据生成模式（全部在 Spark 内部生成）
-  - `synthetic`：简单的 `(key, value)` 测试数据；
-  - `uniform`：在 Spark 内部生成均匀分布的 `(key, value)`；
-  - `skewed`：在 Spark 内部生成带热点 key 的倾斜数据；
-- 主要参数：
-  - `--num-records`：生成记录数；
-  - `--num-partitions`：逻辑分区数（自定义分区前后都保持一致）；
-  - `--hot-keys`：逗号分隔的热点 key 列表，例如 `"0"` 或 `"0,1,2"`；
-    - 若在 `--input-type=skewed` 场景下不指定（或传空字符串），程序会自动将数据生成时使用的 `HOT_KEY` 视为唯一热点 key；
-  - `--hot-bucket-factor`：每个热点 key 拆成多少个子桶位（例如 4、8、32）。**该值不会被程序自动修改，实际使用的桶数与命令行保持一致**；
-  - `--print-sample`：是否打印结果样本，仅本地调试使用。
+- `--input-path`：Parquet 输入路径，由 `run_custom_basic.sh` 根据 `data-type` / `num-records` / `skew-ratio` / `num-partitions` 自动推导；
+- `--input-type`：日志标签（例如 `uniform` / `skewed`），同时也写入 Spark 应用名称与结果文件名；
+- `--num-partitions`：逻辑分区数（自定义分区前后都保持一致，与 Hash / Range 使用相同的值）；
+- `--hot-keys`：逗号分隔的热点 key 列表，例如 `"0"` 或 `"0,1,2"`；
+  - 若在 `--input-type=skewed` 场景下不指定（或传空字符串），程序会自动将数据生成器中使用的 `HOT_KEY`（默认 0）视为唯一热点 key；
+- `--hot-bucket-factor`：每个热点 key 拆成多少个子桶位（例如 4、8、32）。**该值不会被程序自动修改，实际使用的桶数与命令行保持一致**；
+- `--print-sample`：是否打印部分结果，仅本地调试使用。
 
-### 2.3 输出指标（stdout）
+### 2.3 自定义算子链与输出指标（stdout）
 
-`custom_basic.py` 在 stdout 中会输出以下指标：
+在 Custom 实验中，统一的算子链各阶段含义如下：
 
-- `t_partition_seconds`：`partitionBy` 阶段耗时；
-- `t_agg_seconds`：`reduceByKey` 阶段耗时；
-- `t_total_seconds_approx`：两者之和（近似）；
-- `partition_distribution_before`：原始 RDD 各分区记录数；
-- `partition_distribution_after_custom`：自定义分区后各分区记录数；
-- `partition_distribution_after_reduce_raw`：按 `(key, sub_bucket)` 聚合后，各分区记录数；
-- `partition_distribution_final`：按**原始 key** 再次汇总后的最终分区分布（最新代码已添加）。
+1. **Parquet 读取与初始分区**：
+   - 通过 `load_rdd_from_parquet` 加载 `(key, value)` RDD，并重分区到指定的 `num-partitions`，与 Hash / Range 保持一致；
+   - 记录 `partition_distribution_before` 作为对比基线；
+2. **自定义分区阶段（partitionBy + 热点拆桶）**：
+   - 首先通过 `wrap_keys_for_custom_partitioner` 将每条记录的 key 包装为 `(orig_key, sub_bucket)`，其中：
+     - 对于热点 key：根据 `hot-bucket-factor` 将记录映射到多个子桶；
+     - 对于非热点 key：`sub_bucket` 固定为 0；
+   - 然后调用 `partitionBy(numPartitions, partitionFunc=custom_partition_func(...))`，自定义分区函数根据 `(orig_key, sub_bucket)` 与热点拆桶策略决定物理分区；
+   - 通过 `compute_partition_distribution` 记录 `partition_distribution_after_custom`，并统计 `t_partition`（近似包括 shuffle write/read 的时间）；
+3. **第一次 reduceByKey（在包装 key 上聚合）**：
+   - 对 `( (orig_key, sub_bucket), value )` 调用 `reduceByKey`，得到 `aggregated_rdd`，并通过 `count()` 触发 Action；
+   - 记录 `partition_distribution_after_reduce_raw` 以及聚合耗时 `t_agg`；
+4. **第二次 reduceByKey（还原原始 key，结构对齐）**：
+   - 通过 `unwrap_keys_after_agg` 将 key 从 `(orig_key, sub_bucket)` 还原为 `orig_key`，并再次 `reduceByKey`，得到最终的 `(key, sum)` 结果 RDD；
+   - 记录 `partition_distribution_final`，其含义与 Hash / Range 的最终分布完全一致；
+5. **总耗时**：
+   - `t_total = t_partition + t_agg`，可与 Hash 的 `t_partition_shuffle + t_agg`、Range 的 `t_sort + t_agg` 直接对比。
 
 运行时，程序会首先打印本次实验的关键参数，例如：
 
 ```text
 ===== Custom Partitioner Basic Experiment (by C) =====
-Input type        : uniform
-Num records       : 200000
-Num partitions    : 8
-Hot keys          : 
-Hot bucket factor : 4
-Print sample      : True
+Input path       : file:///home/xxx/spark-data/skewed_5m_ratio0.75
+Input type       : skewed
+Num partitions   : 64
+Hot keys         : 0
+Hot bucket factor: 8
+Print sample     : False
 ```
 
-同样，`custom_basic.py` 也通过 `SparkConf` 开启了事件日志，将 Job/Stage/Task 级别指标写入项目根目录下的 `logs/spark-events/`。
+之后会输出关键信息：
+
+- `t_partition_seconds` / `t_agg_seconds` / `t_total_seconds_approx`；
+- `partition_distribution_before` / `partition_distribution_after_custom`；
+- `partition_distribution_after_reduce_raw` / `partition_distribution_final`。
+
+同样，`custom_basic.py` 通过 `SparkConf` 开启事件日志，将 Job/Stage/Task 级别指标写入项目根目录下的 `logs/spark-events/`。后续由统一的 `parse_spark_eventlog.py` 解析并写入 `code/results/custom_*.json`，与 Hash / Range 的 JSON 结构完全对齐，方便统一画图与对比分析。
 
 ---
 
@@ -101,55 +117,37 @@ Print sample      : True
 - 路径：`code/scripts/run_custom_basic.sh`  
 - 作用：在本地 / Master 上快速运行 `custom_basic.py`，并**自动导出 JSON 结果**到 `code/results/`，文件前缀为 `custom_...`。
 
-### 3.2 本地调试示例（local 模式）
+### 3.2 示例命令（与 Hash / Range 对齐）
 
-在 WSL / 本地 Linux 环境中，可以先将脚本里的 `--master` 改为 `local[*]`，然后小规模测试：
-
-```bash
-cd ~/spark-partition-strategy
-
-# 均匀数据 + 无热点（退化为 hash 分区）
-code/scripts/run_custom_basic.sh \
-  --input-type uniform \
-  --num-records 200000 \
-  --num-partitions 8 \
-  --hot-keys "" \
-  --hot-bucket-factor 4 \
-  --print-sample
-
-# 倾斜数据 + 指定热点 key=0
-code/scripts/run_custom_basic.sh \
-  --input-type skewed \
-  --num-records 200000 \
-  --num-partitions 8 \
-  --hot-keys "0" \
-  --hot-bucket-factor 4 \
-  --print-sample
-```
-
-运行结束后，可以在 `code/results/` 下看到自动生成的 `custom_*.json` 结果文件。
-
-### 3.3 集群实验示例（Master 环境）
-
-在 Master 节点上（假设脚本中的 `--master` 已设为 `spark://172.23.166.104:7078`）：
+在本地或 Master 环境下，可以通过 `run_custom_basic.sh` 运行与 Hash / Range 完全对齐的配置。脚本会根据 `--data-type` / `--num-records` / `--skew-ratio` / `--num-partitions` 自动推导 `--input-path`，并在结果文件名中编码这些信息：
 
 ```bash
 cd ~/spark-partition-strategy
 
-# 倾斜分布 + 热点 key=0，比较常用配置
+# 均匀数据 + 无热点（退化为 Hash 行为）
 code/scripts/run_custom_basic.sh \
-  --input-type skewed \
-  --num-records 10000000 \
-  --num-partitions 128 \
-  --hot-keys "0" \
-  --hot-bucket-factor 4
+  --data-type uniform \
+  --num-records 2000000 \
+  --skew-ratio 0.0 \
+  --num-partitions 16 \
+  --hot-keys 0 \
+  --hot-bucket-factor 1
+
+# 倾斜数据 + 单热点 key=0，适中拆桶 b8（skewed, 5m, p64, ratio0.75）
+code/scripts/run_custom_basic.sh \
+  --data-type skewed \
+  --num-records 5000000 \
+  --skew-ratio 0.75 \
+  --num-partitions 64 \
+  --hot-keys 0 \
+  --hot-bucket-factor 8
 ```
 
 每次运行结束后：
 
-- 控制台可以看到 Custom 分区前后分布、时间指标；
+- 控制台会输出自定义分区前后、聚合前后各阶段的时间与分区分布；
 - `logs/spark-events/` 中会新增一个 event log；
-- `code/results/` 中会自动新增一个 `custom_*.json` 结果文件。
+- `code/results/` 中会自动新增一个 `custom_*.json` 结果文件，文件名中包含数据类型、规模、倾斜度（ratio）、热点配置与桶数（hot/bX）以及分区数，便于与 Hash / Range 的结果做统一的对比分析。
 
 ---
 
