@@ -1,9 +1,0 @@
-file,strategy,data_type,partitions,records_tag,hot_keys,bucket_factor,job_count,stage_count,task_count,job_total_ms,job_max_ms,stage_total_ms,stage_max_ms,total_shuffle_read_bytes,total_shuffle_write_bytes,task_min_ms,task_p50_ms,task_p90_ms,task_p99_ms,task_max_ms
-custom_skewed_hot0_b32_p64_5m_20251203_222852.json,custom,skewed,64,5m,hot0,b32,4,7,448,5084,1993,5026,1341,0,0,12,61,221,715,1335
-custom_skewed_hot0_b4_p64_5m_20251203_222830.json,custom,skewed,64,5m,hot0,b4,4,7,448,4776,1800,4719,1233,0,0,9,56,191,708,1227
-custom_skewed_hot0_b8_p64_5m_20251203_222841.json,custom,skewed,64,5m,hot0,b8,4,7,448,4725,1757,4665,1195,0,0,7,55,189,762,1190
-custom_uniform_hotnone_b1_p16_2m_20251203_222747.json,custom,uniform,16,2m,hotnone,b1,4,7,112,2434,1025,2385,1003,0,0,20,157,816,818,832
-hash_skewed_p64_5m_20251203_222759.json,hash,skewed,64,5m,,,5,6,384,5620,1629,5569,1116,0,0,13,66,204,762,963
-hash_uniform_p16_2m_20251203_222719.json,hash,uniform,16,2m,,,5,6,96,2322,933,2278,912,0,0,28,137,761,770,784
-range_skewed_p64_5m_20251203_222812.json,range,skewed,64,5m,,,6,8,512,6023,1923,5969,1515,0,0,13,64,150,982,1506
-range_uniform_p16_2m_20251203_222735.json,range,uniform,16,2m,,,6,8,128,2787,1186,2733,1165,0,0,25,102,981,988,1004

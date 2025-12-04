@@ -27,23 +27,11 @@ _CODE_DIR = os.path.abspath(os.path.join(_SCRIPT_DIR, ".."))
 if _CODE_DIR not in sys.path:
     sys.path.insert(0, _CODE_DIR)
 
-from jobs.common import SKEW_RATIO
-
-
-def derive_skew_tag() -> str:
-    try:
-        ratio = float(SKEW_RATIO)
-    except Exception as exc:
-        raise RuntimeError("Cannot derive skew tag from SKEW_RATIO") from exc
-    if ratio <= 0:
-        raise RuntimeError("SKEW_RATIO must be positive to derive figure paths")
-    return str(int(round(ratio * 100)))
-
-
 def _resolve_paths() -> Dict[str, str]:
-    skew_tag = derive_skew_tag()
-    results_dir = os.path.join("code", f"results_{skew_tag}")
-    figures_dir = os.path.join("docs", f"figures_{skew_tag}")
+    # 结果目录统一为 code/results，图片目录统一为 docs/figures。
+    # 倾斜度和数据规模通过 CSV 中的 records_tag 字段（例如 skewed_5m_ratio0.95）区分。
+    results_dir = os.path.join("code", "results")
+    figures_dir = os.path.join("docs", "figures")
     summary_csv = os.path.join(results_dir, "summary_metrics.csv")
     return {"results_dir": results_dir, "figures_dir": figures_dir, "summary_csv": summary_csv}
 
@@ -57,42 +45,30 @@ def _ensure_summary_exists(summary_csv: str):
 
 def _select_latest_by_strategy(
     df: pd.DataFrame,
-    data_type: str,
-    records_tag: str,
+    scene_tag: str,
     partitions: str,
-    bucket_factor: Optional[str] = None,
 ) -> pd.DataFrame:
-    # 先只按场景过滤（data_type / records_tag / partitions）
+    """在给定 scene_tag / partitions 下，为每个 strategy 选出最新的一条记录。
+
+    scene_tag 形如 "skewed_5m_ratio0.95"，已经编码了数据类型和倾斜度信息。
+    这里不再对 bucket_factor 做过滤，仅按 strategy 维度各取最新一条记录。
+    """
+
     mask = (
-        (df["data_type"] == data_type)
-        & (df["records_tag"] == records_tag)
+        (df["scene_tag"] == scene_tag)
         & (df["partitions"].astype(str) == str(partitions))
     )
     subset = df[mask]
 
-    # 如果指定了 bucket_factor，只收紧 custom 的那一部分，
-    # hash / range 不需要有 bucket_factor 这一列
-    if bucket_factor is not None:
-        bf_str = str(bucket_factor)
-        if not bf_str.startswith("b"):
-            bf_str = f"b{bf_str}"
-
-        is_custom = subset["strategy"] == "custom"
-        subset = subset[~is_custom | (subset["bucket_factor"].astype(str) == bf_str)]
     if subset.empty:
-        desc = f"{data_type} / {records_tag} / p{partitions}"
-        if bucket_factor is not None:
-            desc += f" / b{bucket_factor}"
+        desc = f"{scene_tag} / p{partitions}"
         print(f"[plot_summary] No rows for {desc}")
         return pd.DataFrame()
 
     subset = subset.sort_values("file")
-    # groupby.tail may return a view; make an explicit copy to avoid
-    # SettingWithCopyWarning when we assign into the DataFrame below.
     latest_by_strategy = subset.groupby("strategy").tail(1).copy()
 
     strategy_order = ["hash", "range", "custom"]
-    # use .loc to assign to the column explicitly on the DataFrame copy
     latest_by_strategy.loc[:, "strategy"] = pd.Categorical(
         latest_by_strategy["strategy"], categories=strategy_order, ordered=True
     )
@@ -136,20 +112,66 @@ def main():
     _ensure_summary_exists(summary_csv)
     df = pd.read_csv(summary_csv)
 
-    # ===== 在这里配置你要画的“场景” =====
-    # 以后增加新场景，只需要在这个列表里加一行
-    scenarios: List[Dict[str, str]] = [
-        # 均匀场景：uniform, p16, 2m
-        {"name": "uniform_2m_p16", "data_type": "uniform", "records_tag": "2m", "partitions": "16", "bucket_factor": None},
+    # ===== 自动从 CSV 推导“场景” =====
+    # 不再手动写死场景列表，而是按 (records_tag, partitions) 组合自动生成：
+    #   - 对于每个 (records_tag, partitions)，画一组 hash/range/custom 对比图；
+    #   - 对于 custom，仍然可以在下面单独做 bucket_factor 的横向对比。
 
-        # 温和倾斜场景：skewed, p64, 5m，比较 Hash / Range / Custom-b8
-        {"name": "skewed_5m_p64_b8", "data_type": "skewed", "records_tag": "5m", "partitions": "64", "bucket_factor": "8"},
+    # 只保留我们关心的三种策略
+    df = df[df["strategy"].isin(["hash", "range", "custom"])].copy()
 
-        # 极端倾斜场景：skewed, p64, 5m，比较 Hash / Range / Custom-b32
-        {"name": "skewed_5m_p64_b32", "data_type": "skewed", "records_tag": "5m", "partitions": "64", "bucket_factor": "32"},
+    # ===== 兼容当前 CSV 列格式，构造统一的场景标签和分区数 =====
+    # 当前 summary_metrics.csv 中：
+    #   - data_type: skewed / uniform
+    #   - records_tag: 5m / 2m / ...
+    #   - ratio: ratio0.95 / ratioNone / ... （如果存在该列）
+    #
+    # 本脚本内部统一使用 scene_tag 形如：skewed_5m_ratio0.95
+    # 如果没有 ratio 列，则退化为 data_type_records_tag，例如 uniform_2m。
 
-        # Custom(b4/b8/b32) 横向对比单独在下面处理
-    ]
+    # 某些老版本 CSV 可能没有 ratio 列，这里做一个兼容处理
+    has_ratio = "ratio" in df.columns
+
+    def _build_scene_tag(row: pd.Series) -> str:
+        data_type = str(row.get("data_type", "")).strip() or "unknown"
+        records = str(row.get("records_tag", "")).strip() or "unknown"
+        if has_ratio:
+            ratio = str(row.get("ratio", "")).strip()
+            if ratio:
+                return f"{data_type}_{records}_{ratio}"
+        return f"{data_type}_{records}"
+
+    df["scene_tag"] = df.apply(_build_scene_tag, axis=1)
+
+    # 确保 partitions 列有值：如果为空，则从 file 名里的 `_pXX_` 中提取，
+    # 同时统一成整数形式的字符串，避免 32 和 32.0 被当成两个不同场景。
+    def _extract_partitions(row: pd.Series) -> Optional[str]:
+        val = row.get("partitions")
+        if pd.notna(val) and str(val).strip() != "":
+            s = str(val).strip()
+            try:
+                # 兼容 32 / 32.0 之类的写法
+                return str(int(float(s)))
+            except (ValueError, TypeError):
+                return s
+        fname = str(row.get("file", ""))
+        # 例如 hash_skewed_5m_ratio0.95_p32_2025....json
+        import re
+
+        m = re.search(r"_p(\d+)_", fname)
+        if m:
+            return m.group(1)
+        return None
+
+    df["partitions"] = df.apply(_extract_partitions, axis=1)
+
+    # 所有出现过的 (scene_tag, partitions) 组合
+    scenarios_keys = (
+        df[["scene_tag", "partitions"]]
+        .dropna()
+        .drop_duplicates()
+        .to_dict(orient="records")
+    )
 
     # ===== 在这里配置要画的指标 =====
     # key: CSV 里的列名
@@ -169,15 +191,16 @@ def main():
         },
     ]
 
-    # 第一类：Hash vs Range vs Custom（固定 b，例如 skewed + p64 + 5m + b8）
-    for scenario in scenarios:
-        name = scenario["name"]
-        data_type = scenario["data_type"]
-        records_tag = scenario["records_tag"]
-        partitions = scenario["partitions"]
-        bucket_factor = scenario.get("bucket_factor")
+    # 第一类：Hash vs Range vs Custom（对每个 (scene_tag, partitions) 自动生成）
+    for key in scenarios_keys:
+        scene_tag = str(key["scene_tag"])
+        partitions = str(key["partitions"])
 
-        subset = _select_latest_by_strategy(df, data_type, records_tag, partitions, bucket_factor)
+        # 默认文件名只包含 scene_tag + pXX，后面根据选中的 custom bucket 再附加后缀，
+        # 例如 _b32，表示这张图里 custom 用的是 b32。
+        name = f"{scene_tag}_p{partitions}"
+
+        subset = _select_latest_by_strategy(df, scene_tag, partitions)
         if subset.empty:
             continue
 
@@ -185,16 +208,25 @@ def main():
             col = m["col"]
             label = m["label"]
 
-            if data_type == "uniform" and col in ("task_p90_ms",):
-                continue
-
-            bf_desc = f", b{bucket_factor}" if bucket_factor is not None else ""
-            title = f"{col} ({data_type}, {records_tag}, p{partitions}{bf_desc}): hash vs range vs custom"
+            # 如果有 custom 记录，则找出本次选择的 custom 行对应的 bucket_factor，
+            # 并在标题和文件名中标明，例如 custom=b32。
+            custom_label = ""
+            custom_rows = subset[subset["strategy"] == "custom"]
+            if not custom_rows.empty and "bucket_factor" in custom_rows.columns:
+                bf_val = str(custom_rows.iloc[-1]["bucket_factor"])  # 只会有一条
+                if bf_val:
+                    custom_label = f", custom={bf_val}"
+            title = f"{col} ({scene_tag}, p{partitions}{custom_label}): hash vs range vs custom"
             title = title.replace("task_p90_ms", "Task p90").replace(
                 "task_p99_ms", "Task p99"
             ).replace("job_total_ms", "Job total time")
 
-            out_name = f"{col}_{name}.png"
+            bucket_suffix = ""
+            if custom_label:
+                # custom_label 形如 ", custom=b32"，这里只取 b32
+                bucket_suffix = "_" + custom_label.split("=")[-1]
+
+            out_name = f"{col}_{name}{bucket_suffix}.png"
 
             _bar_plot(
                 subset,
@@ -209,52 +241,58 @@ def main():
     # x 轴为 bucket_factor，y 为各项指标
     # 这里 bucket_factor 在 CSV 中统一存储为 "b4" / "b8" / "b32" 这样的格式
     skew_custom_buckets = ["b4", "b8", "b32"]
-    skew_name = "skewed_5m_p64_custom_buckets"
-    data_type = "skewed"
-    records_tag = "5m"
-    partitions = "64"
 
-    mask_custom = (
-        (df["data_type"] == data_type)
-        & (df["records_tag"] == records_tag)
-        & (df["partitions"].astype(str) == str(partitions))
-        & (df["strategy"] == "custom")
-        & (df["bucket_factor"].astype(str).isin(skew_custom_buckets))
-    )
-    subset_custom = df[mask_custom]
-    if subset_custom.empty:
-        print("[plot_summary] No custom rows for skewed / 5m / p64 / b in {4,8,32}")
-        return
+    # 针对每个 (records_tag, partitions) 组合，若存在至少两个不同的 bucket_factor，
+    # 则自动画一张 "custom 不同 bucket_factor" 的对比图。
+    for key in scenarios_keys:
+        scene_tag = str(key["scene_tag"])
+        partitions = str(key["partitions"])
 
-    # 对每个 bucket_factor 只保留最新一条记录
-    subset_custom = subset_custom.sort_values("file")
-    latest_by_b = subset_custom.groupby("bucket_factor").tail(1)
-    latest_by_b = latest_by_b.sort_values("bucket_factor")
+        mask_custom = (
+            (df["scene_tag"] == scene_tag)
+            & (df["partitions"].astype(str) == str(partitions))
+            & (df["strategy"] == "custom")
+            & (df["bucket_factor"].notna())
+        )
+        subset_custom = df[mask_custom]
+        if subset_custom.empty:
+            continue
 
-    for m in metrics_to_plot:
-        col = m["col"]
-        label = m["label"]
+        # bucket_factor 本身已经是 "b4" / "b8" / "b32"，只保留我们感兴趣的几个，且至少有两个值
+        subset_custom = subset_custom[subset_custom["bucket_factor"].astype(str).isin(skew_custom_buckets)]
+        if subset_custom["bucket_factor"].nunique() < 2:
+            continue
+        subset_custom = subset_custom.sort_values("file")
+        latest_by_b = subset_custom.groupby("bucket_factor").tail(1)
+        latest_by_b = latest_by_b.sort_values("bucket_factor")
 
-        # bucket_factor 本身已经是 "b4" / "b8" / "b32"，直接作为 x 轴标签
-        xs = [str(b) for b in latest_by_b["bucket_factor"].astype(str).tolist()]
-        ys = latest_by_b[col].tolist()
+        # 文件名中带上 bucket_factor 信息，例如 ..._b4-b8-b32
+        bucket_tags = "-".join(str(b) for b in latest_by_b["bucket_factor"].astype(str).tolist())
+        skew_name = f"{scene_tag}_p{partitions}_custom_buckets_{bucket_tags}"
 
-        plt.figure(figsize=(5.5, 4))
-        plt.bar(xs, ys, color="#59a14f")
-        plt.ylabel(label)
-        title = f"{col} (skewed, 5m, p64): custom with different buckets"
-        title = title.replace("task_p90_ms", "Task p90").replace(
-            "task_p99_ms", "Task p99"
-        ).replace("job_total_ms", "Job total time")
-        plt.title(title, fontsize=11, wrap=True)
-        plt.grid(axis="y", linestyle="--", alpha=0.4)
+        for m in metrics_to_plot:
+            col = m["col"]
+            label = m["label"]
 
-        os.makedirs(figures_dir, exist_ok=True)
-        out_path = os.path.join(figures_dir, f"{col}_{skew_name}.png")
-        plt.tight_layout()
-        plt.savefig(out_path, dpi=150)
-        plt.close()
-        print(f"[plot_summary] Saved plot to {out_path}")
+            xs = [str(b) for b in latest_by_b["bucket_factor"].astype(str).tolist()]
+            ys = latest_by_b[col].tolist()
+
+            plt.figure(figsize=(5.5, 4))
+            plt.bar(xs, ys, color="#59a14f")
+            plt.ylabel(label)
+            title = f"{col} ({scene_tag}, p{partitions}, buckets={bucket_tags}): custom with different buckets"
+            title = title.replace("task_p90_ms", "Task p90").replace(
+                "task_p99_ms", "Task p99"
+            ).replace("job_total_ms", "Job total time")
+            plt.title(title, fontsize=11, wrap=True)
+            plt.grid(axis="y", linestyle="--", alpha=0.4)
+
+            os.makedirs(figures_dir, exist_ok=True)
+            out_path = os.path.join(figures_dir, f"{col}_{skew_name}.png")
+            plt.tight_layout()
+            plt.savefig(out_path, dpi=150)
+            plt.close()
+            print(f"[plot_summary] Saved plot to {out_path}")
 
 
 if __name__ == "__main__":

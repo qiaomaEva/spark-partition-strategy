@@ -33,28 +33,15 @@ _CODE_DIR = os.path.abspath(os.path.join(_SCRIPT_DIR, ".."))
 if _CODE_DIR not in sys.path:
     sys.path.insert(0, _CODE_DIR)
 
-from jobs.common import SKEW_RATIO
-
-
-def derive_skew_tag() -> str:
-    try:
-        ratio = float(SKEW_RATIO)
-    except Exception as exc:
-        raise RuntimeError("Cannot derive skew tag from SKEW_RATIO") from exc
-    if ratio <= 0:
-        raise RuntimeError("SKEW_RATIO must be positive to derive results directory")
-    return str(int(round(ratio * 100)))
-
-
 def parse_filename(path: str) -> Dict[str, Optional[str]]:
     """
     从结果文件名中解析出一些关键信息。
 
-    预期文件名模式示例：
-      - range_skewed_p64_5m_20251201_154625.json
-      - hash_uniform_p16_2m_20251201_154835.json
-      - custom_skewed_hot0_b4_p64_5m_20251201_155700.json
-      - custom_uniform_hotnone_b4_p16_2m_20251201_155639.json
+        预期文件名模式示例（data 文件名中已经包含倾斜信息，如 skewed_5m_ratio0.95）：
+            - range_skewed_5m_ratio0.95_p64_20251201_154625.json
+            - hash_uniform_2m_ratio0.00_p16_20251201_154835.json
+            - custom_skewed_5m_ratio0.95_hot0_b4_p64_20251201_155700.json
+            - custom_uniform_2m_ratio0.00_hotnone_b4_p16_20251201_155639.json
     """
     name = os.path.basename(path)
     if not name.endswith(".json"):
@@ -68,6 +55,7 @@ def parse_filename(path: str) -> Dict[str, Optional[str]]:
         "data_type": None,
         "partitions": None,
         "records_tag": None,
+        "ratio": None,
         "hot_keys": None,
         "bucket_factor": None,
     }
@@ -79,21 +67,27 @@ def parse_filename(path: str) -> Dict[str, Optional[str]]:
     info["strategy"] = parts[0]
 
     if info["strategy"] in ("range", "hash"):
-        # strategy_dataType_pXX_recordsTag_时间戳
-        if len(parts) >= 4:
+        # 新格式：strategy_dataType_recordsTag_ratioTag_pXX_时间戳
+        # 例如：range_skewed_5m_ratio0.95_p64_20251201_154625.json
+        # 其中 records_tag=5m, ratio=ratio0.95。
+        if len(parts) >= 5:
             info["data_type"] = parts[1]
-            if re.match(r"^p\d+$", parts[2]):
-                info["partitions"] = parts[2][1:]
-            info["records_tag"] = parts[3]
-    elif info["strategy"] == "custom":
-        # custom_dataType_hotXXX_bX_pXX_recordsTag_时间戳
-        if len(parts) >= 6:
-            info["data_type"] = parts[1]
-            info["hot_keys"] = parts[2]      # hot0 / hotnone / ...
-            info["bucket_factor"] = parts[3] # b4 / ...
+            info["records_tag"] = parts[2]  # e.g. 5m
+            info["ratio"] = parts[3]         # e.g. ratio0.95 / ratio0.75 / ratio0.0
             if re.match(r"^p\d+$", parts[4]):
                 info["partitions"] = parts[4][1:]
-            info["records_tag"] = parts[5]
+    elif info["strategy"] == "custom":
+        # 新格式：custom_dataType_recordsTag_ratioTag_hotXXX_bX_pXX_时间戳
+        # 例如：custom_skewed_5m_ratio0.95_hot0_b4_p64_20251201_155700.json
+        # parts: [custom, skewed, 5m, ratio0.95, hot0, b4, p64, ...]
+        if len(parts) >= 8:
+            info["data_type"] = parts[1]
+            info["records_tag"] = parts[2]      # e.g. 5m
+            info["ratio"] = parts[3]            # ratio0.95 / ratio0.75 / ratio0.0
+            info["hot_keys"] = parts[4]         # hot0 / hotnone / ...
+            info["bucket_factor"] = parts[5]    # b4 / b8 / b32 / ...
+            if re.match(r"^p\d+$", parts[6]):
+                info["partitions"] = parts[6][1:]
     else:
         # 其它策略的话，可以在需要时扩展
         pass
@@ -148,8 +142,9 @@ def extract_metrics_from_json(path: str) -> Dict[str, Any]:
 
 
 def main() -> None:
-    skew_tag = derive_skew_tag()
-    results_dir = os.path.join("code", f"results_{skew_tag}")
+    # 结果目录统一使用 code/results，文件名中携带倾斜度（例如 skewed_5m_ratio0.95），
+    # 不再依赖 SKEW_RATIO 来推导目录名。
+    results_dir = os.path.join("code", "results")
 
     if not os.path.isdir(results_dir):
         print(f"[summarize_results] Results directory not found: {results_dir}")
@@ -190,6 +185,7 @@ def main() -> None:
         "data_type",
         "partitions",
         "records_tag",
+        "ratio",
         "hot_keys",
         "bucket_factor",
         "job_count",

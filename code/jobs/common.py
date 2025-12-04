@@ -1,15 +1,18 @@
 from typing import List, Tuple
-from pyspark import SparkContext
 from pyspark.sql import SparkSession
 from pyspark.rdd import RDD
 
-# 统一的数据分布相关常量 (保留用于 DataGen 或其他参考)
-NUM_KEYS: int = 1000
-SKEW_RATIO: float = 0.95
-HOT_KEY: int = 0
+"""公共的 RDD 加载与分区统计工具。
+
+目前只在 jobs 中复用，不再在这里维护数据分布相关常量，
+避免与 data_gen 中的生成配置产生隐式耦合。
+"""
 
 
-def load_rdd_from_parquet(spark: SparkSession, input_path: str, num_partitions: int = None) -> RDD:
+from typing import Optional
+
+
+def load_rdd_from_parquet(spark: SparkSession, input_path: str, num_partitions: Optional[int] = None) -> RDD:
     """
     从 Parquet 文件加载数据并转换为 (key, value) 的 RDD。
     

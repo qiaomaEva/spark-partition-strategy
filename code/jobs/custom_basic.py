@@ -8,8 +8,9 @@ from pyspark.sql import SparkSession
 from pyspark.rdd import RDD
 from pyspark import SparkConf
 
+from data_gen.DataGen import HOT_KEY
+
 from jobs.common import (
-    HOT_KEY, 
     load_rdd_from_parquet,
     compute_partition_distribution,
 )

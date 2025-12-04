@@ -39,6 +39,8 @@ data/
 logs/spark-events/
 
 # Results (如果需要把实验结果 JSON 上传到仓库，就删掉这一行)
+code/results_95/
+docs/figures_95/
 code/results/
 docs/figures/
 
