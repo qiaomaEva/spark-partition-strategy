@@ -15,7 +15,6 @@
 ```
 spark-partition-strategy/
 ├── code/
-│
 │   ├── jobs/
 │   │   ├── hash_basic.py          # Hash 分区器实验
 │   │   ├── range_basic.py         # Range 分区器实验
