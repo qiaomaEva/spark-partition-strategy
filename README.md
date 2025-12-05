@@ -119,8 +119,8 @@ nohup ./run_all_experiments.sh > experiment.log 2>&1 &
   - **DAG 结构**：Stage 0 (Map) -> **Exchange (Shuffle)** -> Stage 1 (Reduce)
 
   - **机制分析**：Spark 默认采用一次性 Shuffle 将数据分发到下游。这种“直肠子”式的调度机制在面对倾斜数据时，无法感知热点，机械地将所有热点数据发往同一个 Partition，导致下游 Stage 出现严重的长尾。
+   <img width="2541" height="1240" alt="hash" src="https://github.com/user-attachments/assets/9ccd1201-e61e-4f4d-8afb-7fd0923b9960" />
 
-    ![hash](D:\spark-partition-strategy\assets\hash.png)
 
 - **Custom 策略（Optimization）**：
 
@@ -129,8 +129,8 @@ nohup ./run_all_experiments.sh > experiment.log 2>&1 &
     - **第一阶段**：通过加盐（Salting）改变 Key 的分布，触发第一次 Shuffle，实现数据的均匀打散和局部预聚合（Local Reduce）。
     - **第二阶段**：去盐还原 Key，触发第二次 Shuffle，进行极少量的全局聚合。
   - **结论**：虽然 DAG 更复杂、Stage 更多，但这种机制成功将单点压力转化为分布式计算。
+     <img width="1885" height="853" alt="custom" src="https://github.com/user-attachments/assets/4349de8c-77e8-4f72-9eba-274c7fcdb241" />
 
-  ![custom](assets\custom.png)
 
 ### 5.2 对比 Hash、Range、Custom 三种策略在不同数据分布下的表现
 
