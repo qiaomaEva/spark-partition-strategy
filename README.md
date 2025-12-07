@@ -182,7 +182,7 @@ nohup ./run_all_experiments.sh > experiment.log 2>&1 &
   - 负责 RangePartitioner 与自定义 Partitioner 代码（`code/jobs/range_*`, `code/jobs/custom_*`）
   - 编写对应运行脚本（`code/scripts/run_range_*.sh`, `code/scripts/run_custom_*.sh`）
   - 编写并维护自动化日志解析工具（`code/tools/`）
-  - 补充实验设计与对应脚本维护
+  - 优化实验设计与对应脚本维护（统一实验算子链、参数解析模式）
 - 沈丁：
   - 在自己的服务器上部署 Worker-3，并接入 Master 集群
   - 负责绘图与可视化分析（`docs/figures/`）
