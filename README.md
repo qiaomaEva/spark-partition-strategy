@@ -163,7 +163,7 @@ nohup ./run_all_experiments.sh > experiment.log 2>&1 &
 - **负载均衡验证（Timeline）**：Hash 策略的 Timeline 只有一条极长的绿条，集群资源严重闲置。Custom 策略的 Timeline 呈现整齐密集的短绿条，所有 Executor 并行度极高。
 - **有效性结论**：
   - **消除长尾**：Custom 策略通过应用层介入，将物理上的单点热点逻辑化解。
-  - **参数权衡 (Trade-off)**：加盐的桶数（Bucket Factor）并非越大越好。极端倾斜（0.95）时，需要 **大桶数 (b32)** 来充分打散热点；温和倾斜（0.75）时，**适中桶数 (b8)** 即可平衡负载与开销。
+  - **参数权衡 (Trade-off)**：加盐的桶数（Bucket Factor）并非越大越好。极端倾斜（0.95）时，需要 **大桶数 (b32)** 来充分打散热点；温和倾斜（0.75）时，**适中桶数 (b8)** 即可平衡负载与开销，如果桶数过大反而可能增大开销。
 
 
 
@@ -181,7 +181,8 @@ nohup ./run_all_experiments.sh > experiment.log 2>&1 &
 - 孙佳杰：
   - 负责 RangePartitioner 与自定义 Partitioner 代码（`code/jobs/range_*`, `code/jobs/custom_*`）
   - 编写对应运行脚本（`code/scripts/run_range_*.sh`, `code/scripts/run_custom_*.sh`）
-  - 实验补充与设计更新
+  - 编写并维护自动化日志解析工具（`code/tools/`）
+  - 补充实验设计与对应脚本维护
 - 沈丁：
   - 在自己的服务器上部署 Worker-3，并接入 Master 集群
   - 负责绘图与可视化分析（`docs/figures/`）
